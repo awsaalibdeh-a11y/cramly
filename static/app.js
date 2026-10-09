@@ -69,6 +69,7 @@ async function api(path, { method, body, form, signal } = {}) {
   const r = await fetch(path, { method: method || (payload ? "POST" : "GET"), headers, body: payload, signal });
   const d = await r.json().catch(() => ({}));
   if (r.status === 401 && key) { signOut(); throw new Error("Signed out."); }
+  if (r.status === 402 && d.locked) { showPaywall(d); throw new Error(d.error || "Free minute used."); }
   if (!r.ok) throw new Error(d.error || "Something went wrong.");
   return d;
 }
@@ -77,7 +78,7 @@ async function stream(path, { body, form, signal }, onEvent) {
   let payload = form;
   if (!form) { headers["Content-Type"] = "application/json"; payload = JSON.stringify(body); }
   const r = await fetch(path, { method: "POST", headers, body: payload, signal });
-  if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || "Something went wrong."); }
+  if (!r.ok) { const d = await r.json().catch(() => ({})); if (r.status === 402 && d.locked) showPaywall(d); throw new Error(d.error || "Something went wrong."); }
   const reader = r.body.getReader(), dec = new TextDecoder();
   let buf = "";
   for (;;) {
@@ -184,6 +185,8 @@ function shell({ tab = "", set = null, crumbs = [], tutor = false, topicId = 0 }
       <a href="#/calendar" class="${on("calendar")}">${ic("calendar")}Calendar</a>
       <a href="#/review" class="${on("review")}">${ic("cards")}Daily review${due ? `<span class="badge">${due}</span>` : ""}</a>
       <a href="#/record" class="${on("record")}">${ic("mic")}Record lecture</a>
+      <a href="#/solve" class="${on("solve")}">${ic("camera")}Snap and solve<span class="badge new">new</span></a>
+      <a href="#/progress" class="${on("progress")}">${ic("chart")}Progress</a>
     </nav>
     ${set ? `
     <a class="current" href="#/set/${sid}"><span class="tile" style="--h:${set.hue}">${esc(set.emoji)}</span><b>${esc(set.title)}</b></a>
@@ -195,6 +198,9 @@ function shell({ tab = "", set = null, crumbs = [], tutor = false, topicId = 0 }
       <a href="#/set/${sid}/cards" class="${on("cards")}">${ic("cards")}Flashcards</a>
       <a href="#/set/${sid}/swipe" class="${on("swipe")}">${ic("swipe")}Swipe game<span class="badge new">new</span></a>
       <a href="#/set/${sid}/test" class="${on("test")}">${ic("test")}Practice test</a>
+      <a href="#/set/${sid}/exam" class="${on("exam")}">${ic("timer")}Exam builder</a>
+      <a href="#/set/${sid}/map" class="${on("map")}">${ic("network")}Mind map</a>
+      <a href="#/set/${sid}/cheat" class="${on("cheat")}">${ic("sheet")}Cheat sheet</a>
       <a href="#/set/${sid}/match" class="${on("match")}">${ic("puzzle")}Match game</a>
       <a href="#/set/${sid}/add" class="${on("add")}">${ic("upload")}Add material</a>
     </nav>
@@ -208,7 +214,7 @@ function shell({ tab = "", set = null, crumbs = [], tutor = false, topicId = 0 }
     </nav>`;
   $("#top").innerHTML = `
     <div class="crumbs">${crumbs.map((c, i) => (c.href ? `<a href="${c.href}">${esc(c.text)}</a>` : `<span>${esc(c.text)}</span>`) + (i < crumbs.length - 1 ? "<span>›</span>" : "")).join("")}</div>
-    <div class="right"><button class="chip-btn" id="focus-chip" title="Focus timer"></button>${auraChip()}
+    <div class="right">${accessChip()}<button class="chip-btn" id="focus-chip" title="Focus timer"></button>${auraChip()}
       <span class="chip-btn streak ${S.me?.streak ? "" : "cold"}" title="Days in a row you studied">${ic("flame")}<b>${S.me?.streak || 0}</b></span>
       ${set ? `<button class="chip-btn tutor-btn" id="top-tutor">${ic("chat")}<span class="lbl">Tutor</span></button>` : ""}</div>`;
   $$("#tabbar a").forEach((a) => a.classList.toggle("on", a.dataset.tab === tab || (tab === "set" && a.dataset.tab === "home")));
@@ -270,7 +276,8 @@ function paintTutor() {
       ${topic ? '<button class="btn small" id="t-whole" title="Talk about the whole study set">Whole set</button>' : ""}
       <button class="icon-btn" id="t-clear" title="Clear this chat" aria-label="Clear chat">🗑️</button>
       <button class="icon-btn" data-tclose aria-label="Close tutor">✕</button></div>
-    <div class="t-modes"><button data-mode="guided" class="${c.mode === "guided" ? "on" : ""}">🎓 Guided</button><button data-mode="ask" class="${c.mode === "ask" ? "on" : ""}">💬 Ask</button></div>
+    <div class="t-modes"><button data-mode="guided" class="${c.mode === "guided" ? "on" : ""}">🎓 Guided</button><button data-mode="ask" class="${c.mode === "ask" ? "on" : ""}">💬 Ask</button>
+      <select class="t-style" id="t-style" aria-label="Tutor style">${tutorStyleOptions()}</select></div>
     ${call.on ? `<div class="callbar"><span class="wave"><i></i><i></i><i></i><i></i></span><span id="call-state">${call.speaking ? "Speaking…" : "Listening…"}</span><button class="btn small" id="call-lang" style="margin-left:auto">${voiceLang().startsWith("ar") ? "ع" : "EN"}</button></div>` : ""}
     <div class="t-body" id="t-body"></div>
     <div class="t-input"><div class="composer">
@@ -282,6 +289,7 @@ function paintTutor() {
   $("#t-whole")?.addEventListener("click", () => { S.ctx.topicId = 0; S.chat = null; paintTutor(); });
   $("#t-clear").addEventListener("click", () => { c.msgs = []; saveChat(); paintMsgs(); });
   $$("[data-mode]", el).forEach((b) => b.addEventListener("click", () => { c.mode = b.dataset.mode; ls.set("cramly.mode", c.mode); paintTutor(); }));
+  $("#t-style")?.addEventListener("change", (e) => ls.set("cramly.style", e.target.value));
   const ta = $("#t-text");
   const send = () => { const v = ta.value.trim(); if (v) { ta.value = ""; ta.style.height = ""; sendChat(v); } };
   $("#t-send").addEventListener("click", send);
@@ -336,7 +344,7 @@ async function sendChat(text, opts = {}) {
   const ctx = { ...S.ctx };
   let reply = "", err = "";
   try {
-    await stream("/api/chat", { body: { set_id: ctx.setId, topic_id: ctx.topicId || null, mode: c.mode,
+    await stream("/api/chat", { body: { set_id: ctx.setId, topic_id: ctx.topicId || null, mode: c.mode, style: ls.get("cramly.style", ""),
       messages: c.msgs.filter((m) => m.role === "user" || m.role === "assistant").map(({ role, content }) => ({ role, content })) } }, (ev) => {
       if (ev.type === "delta") { reply += ev.text; c.live = reply; paintLive(); } else if (ev.type === "error") err = ev.text;
     });
@@ -422,6 +430,7 @@ async function refreshCur() {
   S.me = { ...S.me, ...(await api("/api/me")) };
 }
 async function route() {
+  window.leaveView?.();
   S.keyHandler && document.removeEventListener("keydown", S.keyHandler);
   S.keyHandler = null;
   if (!key) { $("#welcome").hidden = false; $("#app").hidden = true; $("#tabbar").hidden = true; return; }
@@ -443,8 +452,10 @@ async function route() {
       if (sub === "test") return testView();
       if (sub === "match") return matchView();
       if (sub === "swipe") return swipeView();
+      { const x = setRoute(sub); if (x) return x; }
       if (sub === "t" && p[3]) {
         const tid = +p[3], kind = p[4];
+        { const x = topicRoute(kind, p[5], tid); if (x) return x; }
         if (kind === "read") return readView(tid);
         if (kind === "cards") return cardsView({ topicId: tid });
         if (kind === "quiz") return quizView(tid);
@@ -454,6 +465,7 @@ async function route() {
       return go("#/");
     }
     S.cur = null;
+    { const x = globalRoute(p); if (x) return x; }
     if (p[0] === "new") return newView();
     if (p[0] === "review") return reviewView();
     if (p[0] === "calendar") return calendarView();
@@ -494,6 +506,7 @@ async function homeView() {
       <h1>${hello()}${me.name ? `, ${esc(me.name)}` : ""} 👋</h1></div>
       <a class="btn primary big" href="#/new">＋ New study set</a></div>
     ${sets.length ? dashboard(sets) : ""}
+    ${toolsStrip()}
     ${sets.length ? `<h2 class="sec">Your study sets <small>${sets.length}</small></h2><div class="sets">${sets.map(card).join("")}
       <a class="set new" href="#/new"><span>＋</span>Add a study set</a></div>`
     : `<div class="empty-hero"><div class="owl">🦉</div><h2>Let's make your first study set</h2>
@@ -602,6 +615,7 @@ async function setView() {
       <a class="mode" style="--bg:var(--rose-bg)" href="#/set/${set.id}/swipe"><div class="art">🕹️</div><div class="txt"><small>Earn aura</small><b>Swipe game</b></div></a>
       <a class="mode" style="--bg:var(--lilac-2)" href="#/set/${set.id}/test"><div class="art">🎯</div><div class="txt"><small>Mixed questions</small><b>Practice test</b></div></a>
       <a class="mode" style="--bg:var(--sky-bg)" href="#/set/${set.id}/match"><div class="art">🧩</div><div class="txt"><small>Quick game</small><b>Match game</b></div></a></div>
+    ${moreTools(set)}
     <h2 class="sec">All topics</h2>
     <div class="alltopics">${topics.map((t) => `<button class="trow ${t.status >= 2 ? "done" : t.status ? "half" : ""}" data-t="${t.id}"><span class="n">${t.status >= 2 ? "✓" : t.idx + 1}</span><b>${esc(t.title)}</b><small>${statusWord(t)}${t.quiz_best >= 0 ? ` · quiz ${t.quiz_best}%` : ""}</small></button>`).join("")}</div>
     <div style="margin-top:2rem;display:flex;gap:.6rem;flex-wrap:wrap"><a class="btn" href="#/set/${set.id}/add">${ic("upload")} Add material</a><button class="btn" id="export">${ic("download")} Export flashcards (CSV)</button><button class="btn danger" id="del-set">🗑️ Delete this set</button></div></div>`;
@@ -632,6 +646,8 @@ function paintTopic() {
     { k: "swipe", bg: "var(--rose-bg)", art: "🕹️", tag: "Earn aura", name: "Swipe game", st: "" },
     { k: "explain", bg: "var(--sky-bg)", art: "💡", tag: "Teach it back", name: "Explain it", st: "" },
     { k: "match", bg: "var(--butter)", art: "🧩", tag: "Quick game", name: "Match game", st: "" },
+    { k: "listen", bg: "var(--sky-bg)", art: "🎧", tag: "Podcast", name: "Listen", st: "" },
+    { k: "cardedit", bg: "var(--mint-bg)", art: "✏️", tag: "Your deck", name: "Edit cards", st: "" },
     { k: "test", bg: "var(--lilac-2)", art: "🎯", tag: "Whole set", name: "Practice test", st: "" },
   ];
   const steps = [["Read", t.has_notes, t.has_notes], ["Cards", t.cards > 0, t.cards > 0], ["Quiz", t.quiz_best >= 0, t.quiz_best >= 80]];
@@ -649,6 +665,7 @@ function paintTopic() {
     if (m === "guided") openTutor({ mode: "guided", topic: t.id, start: true });
     else if (m === "read") go(`${base}/read`); else if (m === "cards") go(`${base}/cards`); else if (m === "quiz") go(`${base}/quiz`);
     else if (m === "swipe") go(`${base}/swipe`); else if (m === "explain") go(`${base}/explain`);
+    else if (m === "listen") go(`${base}/listen`); else if (m === "cardedit") go(`${base}/cards/edit`);
     else if (m === "match") go(`#/set/${set.id}/match`); else if (m === "test") go(`#/set/${set.id}/test`);
   }));
   $$(".ptab").forEach((b) => b.classList.toggle("on", +b.dataset.t === t.id));
@@ -756,14 +773,14 @@ async function reviewView() {
 }
 
 /* ============================================================ quizzes and tests */
-function quizSession({ title, questions, backHref, onDone, crumbs, set, topicId = 0, tab = "set" }) {
+function quizSession({ title, questions, backHref, onDone, crumbs, set, topicId = 0, tab = "set", exam = false, timeLimit = 0 }) {
   shell({ tab, set, topicId, tutor: !!set, crumbs });
   const view = $("#view"), L = "ABCD";
-  let i = 0, score = 0, answered = false;
+  let i = 0, score = 0, answered = false, over = false, left = timeLimit;
   const log = [];
   const draw = () => {
     const q = questions[i];
-    view.innerHTML = `<div class="session"><div class="s-top"><a class="icon-btn" href="${backHref}" aria-label="Close">✕</a><div class="bar"><i style="width:${pct(i, questions.length)}%"></i></div><small>${i + 1} / ${questions.length}</small></div>
+    view.innerHTML = `<div class="session"><div class="s-top"><a class="icon-btn" href="${backHref}" aria-label="Close">✕</a><div class="bar"><i style="width:${pct(i, questions.length)}%"></i></div><small>${i + 1} / ${questions.length}</small>${timeLimit ? `<small class="qtimer ${left <= 60 ? "hot" : ""}" id="qtimer">${clock(left)}</small>` : ""}</div>
       <div class="q-card">${q.topic ? `<p class="topic">${esc(q.topic)}</p>` : ""}<h3 dir="auto">${esc(q.q)}</h3>
         <div class="opts">${q.options.map((o, k) => `<button class="opt" data-k="${k}"><span class="l">${L[k]}</span><span dir="auto">${esc(o)}</span></button>`).join("")}</div><div id="why"></div></div>
       <div id="next"></div></div>`;
@@ -771,21 +788,24 @@ function quizSession({ title, questions, backHref, onDone, crumbs, set, topicId 
     answered = false;
   };
   const pick = (k) => {
-    if (answered) return;
+    if (answered || over) return;
     answered = true;
     const q = questions[i], ok = k === q.answer;
     if (ok) score++; else log.push({ q, k });
-    $$(".opt").forEach((b, n) => { b.disabled = true; if (n === q.answer) b.classList.add("right"); else if (n === k) b.classList.add("wrong"); });
-    $("#why").innerHTML = `<div class="why" dir="auto">${ok ? "✅ Correct. " : "❌ Not quite. "}${esc(q.why)}</div>`;
+    if (exam) $$(".opt").forEach((b, n) => { b.disabled = true; b.classList.toggle("sel", n === k); });
+    else $$(".opt").forEach((b, n) => { b.disabled = true; if (n === q.answer) b.classList.add("right"); else if (n === k) b.classList.add("wrong"); });
+    if (!exam) $("#why").innerHTML = `<div class="why" dir="auto">${ok ? "✅ Correct. " : "❌ Not quite. "}${esc(q.why)}</div>`;
     $("#next").innerHTML = `<button class="btn primary big" id="nx" style="width:100%">${i + 1 < questions.length ? "Next question →" : "See my results"}</button>`;
     $("#nx").addEventListener("click", advance); $("#nx").focus();
   };
-  const advance = () => { if (!answered) return; i++; i < questions.length ? draw() : finish(); };
+  const advance = () => { if (!answered || over) return; i++; i < questions.length ? draw() : finish(); };
   const finish = async () => {
+    over = true;
+    if (S.examTimer) { clearInterval(S.examTimer); S.examTimer = 0; }
     const p = pct(score, questions.length), good = p >= 80;
     view.innerHTML = `<div class="session"><div class="result"><div class="ring" style="--p:${p};--c:${good ? "var(--mint)" : p >= 50 ? "var(--sun)" : "var(--rose)"}">${p}%</div>
       <h2>${good ? "You've got this! 🎉" : p >= 50 ? "Getting there" : "Let's go over it again"}</h2><p>${score} of ${questions.length} right. ${good ? "That's enough to master the topic." : "Score 80% to master the topic: read it again or ask the tutor, then retry."}</p>
-      ${log.length ? `<div class="review-list">${log.map(({ q, k }) => `<div class="rv bad" dir="auto"><b>${esc(q.q)}</b><small>Your answer: ${esc(q.options[k])}</small><small>✔ ${esc(q.options[q.answer])}: ${esc(q.why)}</small></div>`).join("")}</div>` : ""}
+      ${log.length ? `<div class="review-list">${log.map(({ q, k }) => `<div class="rv bad" dir="auto"><b>${esc(q.q)}</b><small>Your answer: ${esc(k >= 0 ? q.options[k] : "No answer")}</small><small>✔ ${esc(q.options[q.answer])}: ${esc(q.why)}</small></div>`).join("")}</div>` : ""}
       <div style="display:flex;gap:.6rem;flex-wrap:wrap;justify-content:center">${log.length ? '<button class="btn primary" id="retry">Retry the ones I missed</button>' : ""}<a class="btn ${log.length ? "" : "primary"}" href="${backHref}">Done</a></div></div></div>`;
     if (good) confetti();
     $("#retry")?.addEventListener("click", () => quizSession({ title, questions: log.map((l) => l.q), backHref, onDone: null, crumbs, set, topicId, tab }));
@@ -799,6 +819,17 @@ function quizSession({ title, questions, backHref, onDone, crumbs, set, topicId 
   };
   document.addEventListener("keydown", S.keyHandler);
   draw();
+  if (timeLimit) {
+    S.examTimer = setInterval(() => {
+      left--;
+      const el = $("#qtimer");
+      if (el) { el.textContent = clock(left); el.classList.toggle("hot", left <= 60); }
+      if (left > 0 || over) return;
+      for (let k = answered ? i + 1 : i; k < questions.length; k++) log.push({ q: questions[k], k: -1 });
+      toast("Time is up ⏰", true);
+      finish();
+    }, 1000);
+  }
 }
 async function quizView(tid) {
   const { set } = S.cur, t = topicById(tid);
@@ -960,7 +991,7 @@ async function recordView() {
 
 /* ============================================================ settings, welcome */
 async function settingsSheet() {
-  sheet(`<h3>⚙️ Settings</h3><label>Your name<input id="s-name" value="${esc(S.me.name || "")}" maxlength="30"></label>
+  sheet(`<h3>⚙️ Settings</h3>${accountBlock()}<label>Your name<input id="s-name" value="${esc(S.me.name || "")}" maxlength="30"></label>
     <div class="sheet-actions"><button class="btn primary" id="s-save">Save</button></div><hr>
     <label>Look<div class="seg" id="s-theme"><button data-t="auto">Auto</button><button data-t="light">Light</button><button data-t="dark">Dark</button></div></label><hr>
     <button class="btn" id="s-pair">📱 Use Cramly on another device</button>
@@ -968,6 +999,7 @@ async function settingsSheet() {
     <button class="btn danger" id="s-del">Delete my account and all my study sets</button>
     <div class="sheet-actions"><button class="btn" data-close>Close</button></div>`, () => {
     $$("#s-theme button").forEach((b) => { b.classList.toggle("on", b.dataset.t === themePref()); b.addEventListener("click", () => { setTheme(b.dataset.t); $$("#s-theme button").forEach((x) => x.classList.toggle("on", x === b)); }); });
+    wireAccountBlock();
     $("#s-save").addEventListener("click", async () => { await api("/api/me", { method: "PATCH", body: { name: $("#s-name").value } }); S.me.name = $("#s-name").value; toast("Saved"); closeSheet(); route(); });
     $("#s-pair").addEventListener("click", async () => { const d = await api("/api/pair", { body: {} }); sheet(`<h3>📱 Another device</h3><p class="muted">Open Cramly there, tap <b>I already use Cramly on another device</b>, and type:</p><div class="big-code">${d.code}</div><p class="muted small" style="text-align:center">Works for 10 minutes.</p><div class="sheet-actions"><button class="btn primary" data-close>Done</button></div>`); });
     $("#s-del").addEventListener("click", async () => { if (await confirmSheet({ title: "Delete everything?", text: "Your account and every study set are removed for good.", ok: "Delete it all", danger: true })) { await api("/api/me", { method: "DELETE" }); toast("Deleted"); signOut(); } });
@@ -980,7 +1012,7 @@ $("#start-form").addEventListener("submit", async (e) => {
   try {
     const d = await api("/api/account", { body: { name: $("#start-name").value } });
     key = d.key; ls.set("cramly.key", key);
-    await document.addEventListener("DOMContentLoaded", boot);
+    await boot();
   } catch (err) { toast(err.message, true); }
   btn.disabled = false;
 });
@@ -993,6 +1025,7 @@ $("#have-code").addEventListener("click", () => sheet(`<h3>Join with a code</h3>
 }));
 
 async function boot() {
+  if (window.JOIN) { const code = window.JOIN; window.JOIN = ""; await handleJoinLink(code); }
   $("#welcome").hidden = !!key;
   if (!key) { $("#tabbar").hidden = true; return; }
   if (!location.hash) location.hash = "#/";

@@ -24,6 +24,22 @@ users = Table("users", meta,
     Column("id", Integer, primary_key=True),
     Column("name", String(60), default=""),
     Column("created", Float),
+    Column("premium", Integer, default=0),                         # 1 = joined through a premium link
+    Column("premium_until", Float, default=0),                     # 0 = no end date
+    Column("invite_id", Integer, default=0),                       # which link unlocked it (revoking the link revokes this)
+    Column("trial_used", Float, default=0),                        # seconds of the free minute already used
+    Column("trial_calls", Integer, default=0),                     # AI jobs run during the free minute
+    Column("last_seen", Float, default=0),
+)
+invites = Table("invites", meta,
+    Column("id", Integer, primary_key=True),
+    Column("code", String(40), unique=True),
+    Column("label", String(80), default=""),                       # who the link is for
+    Column("uses_max", Integer, default=3),                        # how many devices can open it
+    Column("uses", Integer, default=0),
+    Column("days", Integer, default=0),                            # how long premium lasts once joined (0 = forever)
+    Column("revoked", Integer, default=0),
+    Column("created", Float),
 )
 devices = Table("devices", meta,
     Column("id", Integer, primary_key=True),
@@ -45,6 +61,7 @@ sets = Table("sets", meta,
     Column("exam", String(10), default=""),                        # YYYY-MM-DD
     Column("created", Float),
     Column("opened", Float, default=0),
+    Column("cheat", Text, default=""),                             # the one-page cheat sheet (markdown)
 )
 materials = Table("materials", meta,
     Column("id", Integer, primary_key=True),
@@ -66,6 +83,7 @@ topics = Table("topics", meta,
     Column("quiz", Text, default=""),                              # JSON questions, made on first open
     Column("quiz_best", Integer, default=-1),                      # best score in percent
     Column("swipes", Text, default=""),                            # JSON swipe-game cards (a question with two answers)
+    Column("podcast", Text, default=""),                           # JSON two-host audio episode
     Column("studied", Float, default=0),
 )
 cards = Table("cards", meta,
@@ -90,10 +108,21 @@ meta.create_all(engine)
 def _migrate():
     """create_all adds new tables but not new columns, so older databases get them added here (safe to run every start)."""
     from sqlalchemy import inspect, text
-    have = {c["name"] for c in inspect(engine).get_columns("topics")}
-    with engine.begin() as c:
-        if "swipes" not in have:
-            c.execute(text("ALTER TABLE topics ADD COLUMN swipes TEXT DEFAULT ''"))
+    wanted = {
+        "topics": [("swipes", "TEXT DEFAULT ''"), ("podcast", "TEXT DEFAULT ''")],
+        "sets": [("cheat", "TEXT DEFAULT ''")],
+        "users": [("premium", "INTEGER DEFAULT 0"), ("premium_until", "FLOAT DEFAULT 0"), ("invite_id", "INTEGER DEFAULT 0"),
+                  ("trial_used", "FLOAT DEFAULT 0"), ("trial_calls", "INTEGER DEFAULT 0"), ("last_seen", "FLOAT DEFAULT 0")],
+    }
+    insp = inspect(engine)
+    for table, cols in wanted.items():
+        if table not in insp.get_table_names():
+            continue
+        have = {c["name"] for c in insp.get_columns(table)}
+        for name, ddl in cols:
+            if name not in have:
+                with engine.begin() as c:
+                    c.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
 
 
 _migrate()
@@ -133,5 +162,5 @@ def user_for(key):
     return d and one(select(users).where(users.c.id == d["user_id"]))
 
 
-__all__ = ["engine", "users", "devices", "pair_codes", "sets", "materials", "topics", "cards", "activity", "one", "many",
+__all__ = ["engine", "users", "invites", "devices", "pair_codes", "sets", "materials", "topics", "cards", "activity", "one", "many",
            "run", "new_device", "user_for", "select", "insert", "update", "delete", "func"]

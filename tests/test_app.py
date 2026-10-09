@@ -123,15 +123,15 @@ class Cramly(Base):
         tid = self.topics(sid)[0]["id"]
         seen = {}
 
-        def fake_chat(mode, context, messages):
-            seen.update(mode=mode, context=context)
+        def fake_chat(mode, context, messages, style=""):
+            seen.update(mode=mode, context=context, style=style)
             yield "Hello "
             yield "there"
         with mock.patch.object(ai, "chat", fake_chat):
             r = self.c.post("/api/chat", headers=self.h, json={"set_id": sid, "topic_id": tid, "mode": "guided", "messages": [{"role": "user", "content": "teach me"}]})
         text = "".join(e.get("text", "") for e in self.events(r) if e["type"] == "delta")
         self.assertEqual(text, "Hello there")
-        self.assertEqual(seen["mode"], "guided")
+        self.assertEqual((seen["mode"], seen["style"]), ("guided", ""))
         self.assertIn("CURRENT TOPIC: Cell basics", seen["context"])
         self.assertIn("basic unit of life", seen["context"])
         bad = self.c.post("/api/chat", headers=self.h, json={"set_id": sid, "messages": [{"role": "assistant", "content": "x"}]})
@@ -254,6 +254,222 @@ class Round2(Base):
             server.db._migrate()
             server.db._migrate()                                                    # safe to run twice
             self.assertIn("swipes", {c["name"] for c in inspect(old).get_columns("topics")})
+
+
+class StudyTools(Base):
+    """The extra study tools."""
+
+    def first_topic(self):
+        sid = self.make_set()
+        return sid, self.topics(sid)[0]["id"]
+
+    def test_podcast_is_made_once(self):
+        sid, tid = self.first_topic()
+        ep = {"title": "Cells 101", "lines": [{"host": "AB"[i % 2], "text": f"line {i}"} for i in range(10)]}
+        with mock.patch.object(ai, "make_podcast", return_value=ep) as made:
+            for _ in range(2):
+                d = self.c.get(f"/api/topics/{tid}/podcast", headers=self.h).get_json()
+        self.assertEqual((d["title"], len(d["lines"]), d["topic"], made.call_count), ("Cells 101", 10, "Cell basics", 1))
+        with mock.patch.object(ai, "make_podcast", return_value={"title": "x", "lines": []}):
+            tid2 = self.topics(sid)[1]["id"]
+            self.assertEqual(self.c.get(f"/api/topics/{tid2}/podcast", headers=self.h).status_code, 502)    # too short: refused
+
+    def test_cheat_sheet_is_cached_and_can_be_remade(self):
+        sid, _ = self.first_topic()
+        with mock.patch.object(ai, "make_cheatsheet", side_effect=["## One\n- a", "## Two\n- b"]) as made:
+            self.assertIn("One", self.c.get(f"/api/sets/{sid}/cheatsheet", headers=self.h).get_json()["sheet"])
+            self.assertIn("One", self.c.get(f"/api/sets/{sid}/cheatsheet", headers=self.h).get_json()["sheet"])
+            self.assertEqual(made.call_count, 1)
+            self.assertIn("Two", self.c.get(f"/api/sets/{sid}/cheatsheet?fresh=1", headers=self.h).get_json()["sheet"])
+
+    def test_mind_map_comes_straight_from_the_plan(self):
+        sid, _ = self.first_topic()
+        d = self.c.get(f"/api/sets/{sid}/mindmap", headers=self.h).get_json()
+        self.assertEqual((d["title"], [t["title"] for t in d["children"]]), ("Cells", ["Cell basics", "Organelles", "Cell division"]))
+        self.assertEqual([p["title"] for p in d["children"][0]["children"]], ["nucleus", "membrane"])
+
+    def test_snap_and_solve_takes_text_or_a_photo(self):
+        sid, _ = self.first_topic()
+        solved = {"solution": "Step 1 ...", "final": "42"}
+        with mock.patch.object(ai, "solve", return_value=solved) as solve:
+            self.assertEqual(self.c.post("/api/solve", headers=self.h, data={"text": "hi"}).status_code, 400)       # nothing to solve
+            ok = self.c.post("/api/solve", headers=self.h, data={"text": "What is 6 x 7?", "set_id": str(sid)})
+            self.assertEqual(ok.get_json()["final"], "42")
+            self.assertIn("basic unit of life", solve.call_args[0][3])                                                 # their material came along
+            photo = self.c.post("/api/solve", headers=self.h, data={"image": (io.BytesIO(b"\x89PNG fake"), "q.png")})
+            self.assertEqual(photo.status_code, 200)
+            self.assertEqual(solve.call_args[0][2], "image/png")
+            bad = self.c.post("/api/solve", headers=self.h, data={"image": (io.BytesIO(b"MZ"), "virus.exe")})
+            self.assertEqual(bad.status_code, 400)
+
+    def test_exam_builder_makes_questions_for_the_chosen_topics(self):
+        sid = self.make_set()
+        ts = self.topics(sid)
+        seen = []
+
+        def fake_quiz(topic, ctx, n=6, level="medium"):
+            seen.append((topic["title"], level))
+            return [dict(QUIZ[i % 6]) for i in range(n)]
+        with mock.patch.object(ai, "make_quiz", fake_quiz):
+            d = self.c.post(f"/api/sets/{sid}/quiz", headers=self.h, json={"topic_ids": [ts[0]["id"], ts[2]["id"]], "n": 10, "level": "hard"}).get_json()
+        self.assertEqual(len(d["questions"]), 10)
+        self.assertEqual({t for t, _ in seen}, {"Cell basics", "Cell division"})
+        self.assertEqual({l for _, l in seen}, {"hard"})
+        self.assertTrue({q["topic"] for q in d["questions"]} <= {"Cell basics", "Cell division"})
+        with mock.patch.object(ai, "make_quiz", fake_quiz):
+            odd = self.c.post(f"/api/sets/{sid}/quiz", headers=self.h, json={"n": 6, "level": "banana"}).get_json()
+        self.assertEqual(odd["level"], "mixed")
+
+    def test_stats_show_activity_weak_topics_and_streaks(self):
+        sid = self.make_set()
+        tid = self.topics(sid)[1]["id"]
+        self.c.post(f"/api/topics/{tid}/event", headers=self.h, json={"kind": "quiz", "score": 2, "total": 6})
+        d = self.c.get("/api/stats", headers=self.h).get_json()
+        self.assertEqual(len(d["days"]), 119)
+        self.assertGreaterEqual(d["days"][-1]["n"], 1)                                # today's activity counted
+        self.assertEqual([w["topic"] for w in d["weak"]], ["Organelles"])
+        self.assertEqual((d["totals"]["sets"], d["totals"]["topics"], d["totals"]["quizzes"]), (1, 3, 1))
+        self.assertGreaterEqual(d["best_streak"], 1)
+
+    def test_card_editor(self):
+        sid, tid = self.first_topic()
+        bad = self.c.post(f"/api/topics/{tid}/cards/add", headers=self.h, json={"front": "only a question"})
+        self.assertEqual(bad.status_code, 400)
+        card = self.c.post(f"/api/topics/{tid}/cards/add", headers=self.h, json={"front": " What is a cell? ", "back": "The unit of life"}).get_json()["card"]
+        self.assertEqual(card["front"], "What is a cell?")
+        self.assertEqual(self.c.patch(f"/api/cards/{card['id']}", headers=self.h, json={"front": "Define a cell", "back": "Basic unit of life"}).status_code, 200)
+        cards = self.c.get(f"/api/sets/{sid}/cards", headers=self.h).get_json()["cards"]
+        self.assertEqual([c["front"] for c in cards], ["Define a cell"])
+        with mock.patch.object(ai, "make_cards", return_value=[{"front": "Define a cell", "back": "dup"}, {"front": "What is DNA?", "back": "Genes"}]) as more:
+            new = self.c.post(f"/api/topics/{tid}/cards/more", headers=self.h).get_json()["cards"]
+        self.assertEqual([c["front"] for c in new], ["What is DNA?"])                  # the duplicate was dropped
+        self.assertEqual(more.call_args.kwargs["avoid"], ["Define a cell"])
+        other = self.c.post("/api/account", json={}).get_json()["key"]
+        self.assertEqual(self.c.delete(f"/api/cards/{card['id']}", headers={"Authorization": f"Bearer {other}"}).status_code, 404)   # not theirs
+        self.assertEqual(self.c.delete(f"/api/cards/{card['id']}", headers=self.h).status_code, 200)
+
+    def test_tutor_style_reaches_the_ai_only_when_valid(self):
+        sid = self.make_set()
+        seen = []
+
+        def fake_chat(mode, context, messages, style=""):
+            seen.append(style)
+            yield "ok"
+        with mock.patch.object(ai, "chat", fake_chat):
+            for style in ("eli5", "nonsense"):
+                self.c.post("/api/chat", headers=self.h, json={"set_id": sid, "style": style, "messages": [{"role": "user", "content": "hi"}]}).get_data()
+        self.assertEqual(seen, ["eli5", ""])
+
+    def test_each_free_ai_job_counts_toward_the_cap(self):
+        tid = self.topics(self.make_set())[0]["id"]
+        with mock.patch.object(ai, "make_swipes", return_value=SWIPES):
+            self.c.get(f"/api/topics/{tid}/swipes", headers=self.h)
+        uid = server.db.user_for(self.key)["id"]
+        self.assertGreaterEqual(server.db.one(server.select(server.db.users).where(server.db.users.c.id == uid))["trial_calls"], 2)
+
+
+class Access(Base):
+    """The free minute, premium links, and the owner's admin tools."""
+
+    def uid(self):
+        return server.db.user_for(self.key)["id"]
+
+    def set_user(self, **vals):
+        server.db.run(server.update(server.db.users).where(server.db.users.c.id == self.uid()).values(**vals))
+
+    def admin(self, method, path, **kw):
+        with mock.patch.dict(os.environ, {"ADMIN_KEY": "a-long-private-passphrase"}):
+            return getattr(self.c, method)(path, headers={"X-Admin-Key": "a-long-private-passphrase"}, **kw)
+
+    def make_link(self, **body):
+        d = self.admin("post", "/api/admin/invites", json={"label": "Sara", "uses_max": 2, **body}).get_json()["invite"]
+        return d["code"], d["id"]
+
+    def test_free_minute_counts_down_then_locks_everything_but_the_explanation(self):
+        d = self.c.get("/api/me", headers=self.h).get_json()
+        self.assertEqual((d["premium"], d["locked"], d["trial_total"]), (False, False, 60))
+        self.assertGreater(d["trial_left"], 55)
+        self.assertEqual(self.c.get("/api/sets", headers=self.h).status_code, 200)
+        self.set_user(trial_used=59.9, last_seen=server.time.time() - 3)
+        r = self.c.get("/api/sets", headers=self.h)
+        self.assertEqual(r.status_code, 402)
+        self.assertEqual((r.get_json()["locked"], r.get_json()["contact"]), (True, "Awsaa.libdeh@gmail.com"))
+        me = self.c.get("/api/me", headers=self.h).get_json()                      # the page can still ask what's wrong
+        self.assertEqual((me["locked"], me["trial_left"]), (True, 0))
+        self.assertTrue(self.c.post("/api/beat", headers=self.h).get_json()["locked"])
+        self.assertEqual(self.c.post("/api/sets", headers=self.h, data={"text": TEXT}).status_code, 402)
+
+    def test_only_a_few_ai_jobs_fit_in_the_free_minute(self):
+        self.set_user(trial_calls=server.TRIAL_CALLS)
+        with mock.patch.object(ai, "make_plan", fake_plan):
+            r = self.c.post("/api/sets", headers=self.h, data={"text": TEXT})
+        self.assertEqual(r.status_code, 402)                                       # the 9th AI job is refused
+        self.assertEqual(self.c.get("/api/sets", headers=self.h).status_code, 402)
+
+    def test_a_premium_link_unlocks_and_revoking_it_locks_again(self):
+        self.set_user(trial_used=500)
+        self.assertEqual(self.c.get("/api/sets", headers=self.h).status_code, 402)
+        code, iid = self.make_link()
+        r = self.c.post("/api/join", headers=self.h, json={"code": code})
+        self.assertEqual((r.status_code, r.get_json()["premium"]), (200, True))
+        me = self.c.get("/api/me", headers=self.h).get_json()
+        self.assertEqual((me["premium"], me["locked"]), (True, False))
+        self.assertEqual(self.c.get("/api/sets", headers=self.h).status_code, 200)
+        self.admin("post", f"/api/admin/invites/{iid}/revoke", json={"revoked": True})
+        self.assertEqual(self.c.get("/api/sets", headers=self.h).status_code, 402)  # switching the link off takes it back
+        self.admin("post", f"/api/admin/invites/{iid}/revoke", json={"revoked": False})
+        self.assertEqual(self.c.get("/api/sets", headers=self.h).status_code, 200)
+
+    def test_link_device_limit_and_unknown_codes(self):
+        code, _ = self.make_link()
+        keys = [self.c.post("/api/join", json={"code": code}).get_json()["key"] for _ in range(2)]   # a new device needs no account first
+        self.assertTrue(all(keys))
+        for k in keys:
+            self.assertTrue(self.c.get("/api/me", headers={"Authorization": f"Bearer {k}"}).get_json()["premium"])
+        third = self.c.post("/api/join", json={"code": code})
+        self.assertEqual(third.status_code, 400)
+        self.assertIn("Awsaa.libdeh@gmail.com", third.get_json()["error"])
+        self.assertEqual(self.c.post("/api/join", json={"code": "nope"}).status_code, 400)
+        again = self.c.post("/api/join", headers={"Authorization": f"Bearer {keys[0]}"}, json={"code": code})
+        self.assertEqual(again.status_code, 200)                                    # the same device re-opening it costs nothing
+
+    def test_premium_can_end_after_some_days(self):
+        code, _ = self.make_link(days=30)
+        self.c.post("/api/join", headers=self.h, json={"code": code})
+        self.assertAlmostEqual(self.c.get("/api/me", headers=self.h).get_json()["premium_until"], server.time.time() + 30 * 86400, delta=60)
+        self.set_user(premium_until=server.time.time() - 10, trial_used=500)
+        self.assertEqual(self.c.get("/api/sets", headers=self.h).status_code, 402)
+
+    def test_admin_needs_the_secret_key(self):
+        self.assertEqual(self.c.get("/api/admin/overview").status_code, 403)                  # no key configured: off
+        with mock.patch.dict(os.environ, {"ADMIN_KEY": "a-long-private-passphrase"}):
+            self.assertEqual(self.c.get("/api/admin/overview", headers={"X-Admin-Key": "guess"}).status_code, 403)
+            self.assertEqual(self.c.get("/api/admin/overview", headers={"X-Admin-Key": "a-long-private-passphrase"}).status_code, 200)
+        with mock.patch.dict(os.environ, {"ADMIN_KEY": "short"}):                              # a weak key is as good as none
+            self.assertEqual(self.c.get("/api/admin/overview", headers={"X-Admin-Key": "short"}).status_code, 403)
+        code, iid = self.make_link(label="Omar")
+        ov = self.admin("get", "/api/admin/overview").get_json()
+        mine = [i for i in ov["invites"] if i["id"] == iid]
+        self.assertEqual([i["label"] for i in mine], ["Omar"])
+        self.assertTrue(mine[0]["link"].endswith(f"/join/{code}"))
+        self.assertGreaterEqual(ov["accounts"], 1)
+        self.admin("delete", f"/api/admin/invites/{iid}")
+        self.assertNotIn(iid, [i["id"] for i in self.admin("get", "/api/admin/overview").get_json()["invites"]])
+
+    def test_join_page_and_admin_page_are_served(self):
+        page = self.c.get("/join/abc123")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b'window.JOIN = "abc123"', page.data)
+        self.assertEqual(page.headers["Referrer-Policy"], "no-referrer")                       # the code never leaks to other sites
+        self.assertEqual(self.c.get("/admin").status_code, 200)
+        self.assertIn(b"window.JOIN = null", self.c.get("/").data)
+
+    def test_only_a_few_free_accounts_per_day_from_one_address(self):
+        for _ in range(server.FREE_ACCOUNTS_PER_DAY - 1):                           # setUp already made one
+            self.assertEqual(self.c.post("/api/account", json={}).status_code, 200)
+        r = self.c.post("/api/account", json={})
+        self.assertEqual(r.status_code, 429)
+        self.assertTrue(r.get_json()["locked"])
 
 
 class Reading(unittest.TestCase):

@@ -1,7 +1,7 @@
 /* Cramly: warm paper, deep ink, a grape accent, pastel study cards. Serif headings, calm spacing. */
 :root {
-  --paper: #f7f2e8; --card: #fffdf8; --ink: #1e1a16; --ink-2: #3a342c; --muted: #7b7266; --line: var(--line);
-  --grape: #6a4cff; --grape-d: #4b32d6; --grape-l: var(--grape-l);
+  --paper: #f7f2e8; --card: #fffdf8; --ink: #1e1a16; --ink-2: #3a342c; --muted: #7b7266; --line: #e6e9f5;
+  --grape: #6a4cff; --grape-d: #4b32d6; --grape-l: #eceaff;
   --mint: #2fbf8a; --sun: #ffb938; --rose: #ff6b8b; --sky: #4aa8ff; --bad: #e5484d;
   --serif: "Fraunces", Georgia, "Times New Roman", serif; --sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --r: 1.25rem;

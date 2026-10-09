@@ -91,14 +91,15 @@ function afterShell() {
   $("#focus-chip")?.addEventListener("click", focusSheet);
   $$("#tabbar [data-ic], #view [data-ic]").forEach((el) => { el.innerHTML = ic(el.dataset.ic); });
   focusTick();
+  wireAccess();
 }
 
 /* ============================================================ theme */
-const themePref = () => ls.get("cramly.theme", "auto");
+const themePref = () => ls.get("cramly.theme", "light");
 function applyTheme(t = themePref()) {
   if (t === "auto") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
   const dark = t === "dark" || (t === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
-  const meta = $('meta[name="theme-color"]'); if (meta) meta.content = dark ? "#14110e" : "#f7f2e8";
+  const meta = $('meta[name="theme-color"]'); if (meta) meta.content = dark ? "#14110e" : "#f6f8ff";
 }
 function setTheme(t) { ls.set("cramly.theme", t); applyTheme(t); }
 

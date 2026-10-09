@@ -4,6 +4,7 @@ No passwords: the first visit makes an account and this browser keeps a private 
 code. The AI never sees anything but what you upload."""
 
 import datetime as dt
+import hmac
 import json
 import logging
 import math
@@ -12,12 +13,13 @@ import queue
 import random
 import re
 import secrets
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
 from dotenv import load_dotenv
-from flask import Flask, Response, jsonify, render_template, request, stream_with_context
+from flask import Flask, Response, g, jsonify, render_template, request, stream_with_context
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 logging.basicConfig(level=logging.INFO)
@@ -35,15 +37,20 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 MAX_SETS = 30
 INTERVAL_DAYS = [0, 1, 3, 7, 14, 30]                                   # Leitner boxes 0..5
 
+TRIAL_SECONDS = int(os.environ.get("TRIAL_SECONDS", "60"))              # the free minute
+TRIAL_CALLS = int(os.environ.get("TRIAL_CALLS", "8"))                  # and at most this many AI jobs inside it
+CONTACT = os.environ.get("CONTACT_EMAIL", "Awsaa.libdeh@gmail.com")
+FREE_ACCOUNTS_PER_DAY = int(os.environ.get("FREE_ACCOUNTS_PER_DAY", "4"))     # new free accounts per visitor address per day
+
 _hits, _hits_lock = {}, threading.Lock()
 _topic_locks, _locks_lock = {}, threading.Lock()
 
 
-def limited(bucket, per_hour):
+def limited(bucket, per_hour, window=3600):
     ip = (request.headers.get("X-Forwarded-For", request.remote_addr or "?")).split(",")[0].strip()
     now = time.time()
     with _hits_lock:
-        recent = [t for t in _hits.get((bucket, ip), []) if now - t < 3600]
+        recent = [t for t in _hits.get((bucket, ip), []) if now - t < window]
         blocked = len(recent) >= per_hour
         if not blocked:
             recent.append(now)
@@ -56,14 +63,60 @@ def me():
     return db.user_for(key)
 
 
-def need_user(fn):
+def is_premium(user):
+    """Premium = joined through a link that is still valid (not revoked) and not past its end date."""
+    if not user["premium"]:
+        return False
+    if user["premium_until"] and user["premium_until"] < time.time():
+        return False
+    if user["invite_id"]:
+        inv = db.one(select(db.invites).where(db.invites.c.id == user["invite_id"]))
+        if not inv or inv["revoked"]:
+            return False
+    return True
+
+
+def trial_left(user):
+    return max(0, TRIAL_SECONDS - (user["trial_used"] or 0))
+
+
+def touch(user):
+    """Count this request's time against the free minute: real time since the last request, at most 6 s per gap."""
+    now = time.time()
+    last = user["last_seen"] or 0
+    dt_s = 1.0 if not last else min(6.0, max(0.0, now - last))
+    used = (user["trial_used"] or 0) + dt_s
+    db.run(update(db.users).where(db.users.c.id == user["id"]).values(trial_used=used, last_seen=now))
+    user["trial_used"], user["last_seen"] = used, now
+
+
+LOCKED = {"error": "Your free minute is up.", "locked": True}
+
+
+def _wrap(fn, gated):
     def wrapped(*a, **k):
         user = me()
         if not user:
             return jsonify(error="Not signed in."), 401
+        user["is_premium"] = is_premium(user)
+        if not user["is_premium"]:
+            touch(user)
+            if gated and (trial_left(user) <= 0 or (user["trial_calls"] or 0) > TRIAL_CALLS):
+                return jsonify(**LOCKED, contact=CONTACT), 402
+        g.user = user
         return fn(user, *a, **k)
     wrapped.__name__ = fn.__name__
     return wrapped
+
+
+def need_user(fn):
+    """Signed in, and either premium or still inside the free minute."""
+    return _wrap(fn, True)
+
+
+def need_user_open(fn):
+    """Signed in (premium or not, locked or not): for the pages that explain the lock."""
+    return _wrap(fn, False)
 
 
 def own_set(user, set_id):
@@ -76,8 +129,16 @@ def own_topic(user, topic_id):
 
 
 def need_ai():
+    """Call at the start of every AI job: checks the key, and counts the job against the free minute's cap."""
     if not os.environ.get("OPENAI_API_KEY"):
         return jsonify(error="The AI isn't connected yet."), 503
+    user = getattr(g, "user", None)
+    if user and not user.get("is_premium"):
+        calls = (user["trial_calls"] or 0) + 1
+        db.run(update(db.users).where(db.users.c.id == user["id"]).values(trial_calls=calls))
+        user["trial_calls"] = calls
+        if calls > TRIAL_CALLS:
+            return jsonify(**LOCKED, contact=CONTACT), 402
     return None
 
 
@@ -103,7 +164,7 @@ def headers(resp):
 
 @app.route("/")
 def index():
-    resp = app.make_response(render_template("index.html", v=_version()))
+    resp = app.make_response(render_template("index.html", v=_version(), join=None))
     resp.headers["Cache-Control"] = "no-cache"
     return resp
 
@@ -164,8 +225,8 @@ def streak(user):
 # ---------- account ----------
 @app.post("/api/account")
 def create_account():
-    if limited("account", 10):
-        return jsonify(error="Too many new accounts from here. Try again later."), 429
+    if limited("account", 10) or limited("account_day", FREE_ACCOUNTS_PER_DAY, window=86400):
+        return jsonify(error=f"Too many new accounts from this connection today. For premium, message {CONTACT}.", locked=True, contact=CONTACT), 429
     b = request.get_json(silent=True) or {}
     uid = db.run(insert(db.users).values(name=re.sub(r"[^\w .'-]", "", str(b.get("name") or ""), flags=re.UNICODE).strip()[:40], created=time.time()))
     return jsonify(key=db.new_device(uid))
@@ -178,11 +239,52 @@ def _due_count(user_id):
         return c.execute(q).scalar() or 0
 
 
+def access_view(user):
+    prem = user["is_premium"]
+    left = trial_left(user)
+    locked = (not prem) and (left <= 0 or (user["trial_calls"] or 0) > TRIAL_CALLS)
+    return {"premium": prem, "premium_until": user["premium_until"] if prem else 0, "trial_left": 0 if prem else int(left),
+            "trial_total": TRIAL_SECONDS, "locked": locked, "contact": CONTACT}
+
+
 @app.get("/api/me")
-@need_user
+@need_user_open
 def get_me(user):
     return jsonify(name=user["name"], streak=streak(user), due=_due_count(user["id"]), today=local_today().isoformat(),
-                   ai=bool(os.environ.get("OPENAI_API_KEY")))
+                   ai=bool(os.environ.get("OPENAI_API_KEY")), **access_view(user))
+
+
+@app.post("/api/beat")
+@need_user_open
+def beat(user):
+    """The page pings this every few seconds while it's visible: that's what the free minute counts."""
+    return jsonify(**access_view(user))
+
+
+@app.post("/api/join")
+def join():
+    """Open a premium link: this device's account becomes premium (a new account is made if the device has none)."""
+    if limited("join", 30):
+        return jsonify(error="Too many tries. Wait a while."), 429
+    code = str((request.get_json(silent=True) or {}).get("code") or "").strip()
+    inv = db.one(select(db.invites).where(db.invites.c.code == code)) if code else None
+    if not inv or inv["revoked"]:
+        return jsonify(error=f"This premium link isn't valid any more. Message {CONTACT} for a new one."), 400
+    user = me()
+    new_key = None
+    if user and user["premium"] and user["invite_id"] == inv["id"]:
+        return jsonify(ok=True, premium=True, key=None)                    # already joined through this link
+    if inv["uses_max"] and inv["uses"] >= inv["uses_max"]:
+        return jsonify(error=f"This premium link has been used on as many devices as allowed. Message {CONTACT}."), 400
+    if not user:
+        uid = db.run(insert(db.users).values(name="", created=time.time()))
+        new_key = db.new_device(uid)
+    else:
+        uid = user["id"]
+    until = time.time() + inv["days"] * 86400 if inv["days"] else 0
+    db.run(update(db.users).where(db.users.c.id == uid).values(premium=1, premium_until=until, invite_id=inv["id"]))
+    db.run(update(db.invites).where(db.invites.c.id == inv["id"]).values(uses=inv["uses"] + 1))
+    return jsonify(ok=True, premium=True, key=new_key)
 
 
 @app.patch("/api/me")
@@ -809,6 +911,7 @@ def chat(user):
     if not history or history[-1]["role"] != "user":
         return jsonify(error="Ask me something."), 400
     mode = "guided" if b.get("mode") == "guided" else "ask"
+    style = b.get("style") if b.get("style") in ai.STYLES else ""
     topic = own_topic(user, int(b.get("topic_id") or 0)) if b.get("topic_id") else None
     last = history[-1]["content"]
     if topic:
@@ -824,7 +927,7 @@ def chat(user):
 
     def work():
         try:
-            for piece in ai.chat(mode, ctx, history):
+            for piece in ai.chat(mode, ctx, history, style):
                 yield ev("delta", text=piece)
             if topic:
                 record_activity(user)
@@ -851,6 +954,11 @@ def calendar(user):
             events.append({"date": s["exam"], "kind": "exam", "set_id": s["id"], "set": s["title"], "emoji": s["emoji"], "topic": "Exam day"})
     events.sort(key=lambda e: (e["date"], e["kind"] != "exam"))
     return jsonify(events=events, today=today.isoformat(), due=_due_count(user["id"]))
+
+
+import features  # noqa: E402  (owner tools and premium extras: registered here, after everything they use exists)
+
+features.register(sys.modules[__name__])
 
 
 if __name__ == "__main__":

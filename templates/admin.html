@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Cramly · Premium links</title>
+  <link rel="icon" href="{{ url_for('static', filename='icon-64.png') }}" type="image/png">
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --ink: #1d1a2b; --muted: #77718a; --line: #e8e4f3; --grape: #6a4cff; --card: #fff; --bg: #f7f5ff; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: radial-gradient(900px 400px at 10% -10%, #e9e2ff, transparent 60%), radial-gradient(700px 400px at 100% 0%, #ffeede, transparent 55%), var(--bg); color: var(--ink); font: 16px/1.55 Inter, system-ui, sans-serif; }
+    main { max-width: 52rem; margin: 0 auto; padding: 1.5rem 1.1rem 4rem; }
+    h1 { margin: 0.2rem 0 0.2rem; font: 700 2.1rem/1.1 Fraunces, serif; } h2 { font: 700 1.3rem Fraunces, serif; margin: 1.8rem 0 0.7rem; }
+    .muted { color: var(--muted); } .small { font-size: 0.85rem; }
+    .card { padding: 1.1rem 1.2rem; border-radius: 1.2rem; background: var(--card); box-shadow: 0 1px 2px rgba(60, 40, 120, 0.06), 0 16px 36px -24px rgba(60, 40, 120, 0.4); }
+    input, select { width: 100%; min-height: 2.8rem; padding: 0 0.9rem; border: 1.5px solid var(--line); border-radius: 0.9rem; background: #fff; font: 16px Inter, sans-serif; outline: none; }
+    input:focus { border-color: var(--grape); box-shadow: 0 0 0 4px #ece8ff; }
+    label { display: grid; gap: 0.3rem; color: var(--muted); font-weight: 600; font-size: 0.82rem; }
+    button { min-height: 2.6rem; padding: 0 1.1rem; border: 0; border-radius: 999px; background: #fff; color: var(--ink); font: 600 0.92rem Inter, sans-serif; cursor: pointer; box-shadow: inset 0 0 0 1.5px var(--line); }
+    button.primary { background: var(--grape); color: #fff; box-shadow: 0 10px 22px -12px rgba(106, 76, 255, 0.9); } button.danger { color: #c92a3a; } button.small { min-height: 2.1rem; padding: 0 0.8rem; font-size: 0.82rem; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: 0.6rem; }
+    .stat b { display: block; font: 700 1.9rem/1.1 Fraunces, serif; } .stat span { color: var(--muted); font-weight: 600; font-size: 0.8rem; }
+    .form { display: grid; grid-template-columns: 2fr 1fr 1fr auto; gap: 0.6rem; align-items: end; }
+    .row { display: grid; grid-template-columns: 1fr auto; gap: 0.6rem 1rem; align-items: center; padding: 0.9rem 0; border-top: 1px solid var(--line); }
+    .row:first-child { border-top: 0; } .row b { font-size: 1.02rem; }
+    .link { display: block; max-width: 100%; margin-top: 0.3rem; padding: 0.35rem 0.6rem; overflow: hidden; border-radius: 0.6rem; background: #f4f1ff; color: #4b32d6; font: 500 0.82rem ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
+    .tag { display: inline-block; padding: 0.05rem 0.55rem; border-radius: 999px; background: #e6f8ee; color: #13774f; font-weight: 700; font-size: 0.72rem; } .tag.off { background: #ffe5e8; color: #b42336; }
+    .acts { display: flex; gap: 0.4rem; flex-wrap: wrap; justify-content: flex-end; }
+    .err { color: #c92a3a; font-weight: 600; } .toast { position: fixed; left: 50%; bottom: 1.4rem; transform: translateX(-50%); padding: 0.7rem 1.2rem; border-radius: 999px; background: var(--ink); color: #fff; font-weight: 600; }
+    @media (max-width: 640px) { .form { grid-template-columns: 1fr 1fr; } .form label:first-child, .form button { grid-column: 1 / -1; } .row { grid-template-columns: 1fr; } .acts { justify-content: flex-start; } }
+  </style>
+</head>
+<body>
+<main>
+  <p class="muted small" style="margin:0">Cramly · private</p>
+  <h1>Premium links</h1>
+  <p class="muted">Make a link for each person you want to give premium. They open it once on their device and it unlocks everything. You can switch any link off later.</p>
+
+  {% if not configured %}
+  <div class="card" style="margin-top:1rem">
+    <b>One setup step first</b>
+    <p class="muted" style="margin:.3rem 0 0">This page is switched off until you add a private admin password on the server: in Render open <b>cramly → Environment</b>, add a variable named <b>ADMIN_KEY</b> with any long password (at least 12 characters, keep it to yourself), then deploy. Come back here and enter that password.</p>
+  </div>
+  {% endif %}
+
+  <div class="card" id="gate" style="margin-top:1rem">
+    <label>Admin password<input id="key" type="password" autocomplete="current-password" placeholder="The ADMIN_KEY you set on the server"></label>
+    <p class="err small" id="gate-err" hidden></p>
+    <div style="margin-top:.7rem"><button class="primary" id="enter">Open</button></div>
+  </div>
+
+  <div id="panel" hidden>
+    <div class="stats" id="stats" style="margin-top:1rem"></div>
+
+    <h2>New premium link</h2>
+    <div class="card form">
+      <label>Who is it for?<input id="label" maxlength="60" placeholder="e.g. Sara (study group)"></label>
+      <label>Devices allowed<input id="uses" type="number" min="1" max="50" value="3"></label>
+      <label>Premium lasts (days, 0 = forever)<input id="days" type="number" min="0" max="3650" value="0"></label>
+      <button class="primary" id="make">Make link</button>
+    </div>
+
+    <h2>Your links</h2>
+    <div class="card" id="list"><p class="muted">Nothing yet.</p></div>
+    <p class="muted small" style="margin-top:1rem">"Devices allowed" is how many phones or computers can open the same link. If a link gets shared further than you meant, switch it off and the people who joined through it go back to the free minute.</p>
+  </div>
+</main>
+<script>
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  let key = ""; try { key = localStorage.getItem("cramly.admin") || ""; } catch (e) { /* private mode */ }
+  const toast = (m) => { const t = Object.assign(document.createElement("div"), { className: "toast", textContent: m }); document.body.append(t); setTimeout(() => t.remove(), 2400); };
+  const gift = (link) => "🎁 I am gifting you Cramly Premium! It normally costs $2.99, but it is completely free for you. Open this link on your phone or laptop and everything unlocks:
+" + link;
+  async function call(path, method = "GET", body) {
+    const r = await fetch(path, { method, headers: { "X-Admin-Key": key, ...(body ? { "Content-Type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || "Something went wrong.");
+    return d;
+  }
+  async function load() {
+    const d = await call("/api/admin/overview");
+    $("#gate").hidden = true; $("#panel").hidden = false;
+    $("#stats").innerHTML = [["Accounts", d.accounts], ["Premium", d.premium], ["Free", d.free], ["Used their free minute", d.locked], ["New today", d.new_today], ["Active today", d.active_today]]
+      .map(([n, v]) => `<div class="card stat"><b>${v}</b><span>${n}</span></div>`).join("");
+    $("#list").innerHTML = d.invites.length ? d.invites.map((i) => `<div class="row"><div><b>${esc(i.label)}</b> <span class="tag ${i.revoked ? "off" : ""}">${i.revoked ? "switched off" : "active"}</span>
+      <div class="muted small">${i.uses} of ${i.uses_max} devices · ${i.days ? `${i.days} days` : "forever"} · made ${new Date(i.created * 1000).toLocaleDateString()}</div>
+      <span class="link">${esc(i.link)}</span></div>
+      <div class="acts"><button class="small primary" data-copy="${esc(i.link)}" data-msg="1">Copy gift message</button><button class="small" data-copy="${esc(i.link)}">Copy link</button>
+        <button class="small" data-toggle="${i.id}" data-revoked="${i.revoked ? 0 : 1}">${i.revoked ? "Switch on" : "Switch off"}</button><button class="small danger" data-del="${i.id}">Delete</button></div></div>`).join("")
+      : '<p class="muted">Nothing yet. Make your first link above.</p>';
+    document.querySelectorAll("[data-copy]").forEach((b) => b.addEventListener("click", async () => { try { await navigator.clipboard.writeText(b.dataset.msg ? gift(b.dataset.copy) : b.dataset.copy); toast(b.dataset.msg ? "Message copied. Send it to them." : "Link copied. Send it to them."); } catch (e) { prompt("Copy this link:", b.dataset.copy); } }));
+    document.querySelectorAll("[data-toggle]").forEach((b) => b.addEventListener("click", async () => { await call(`/api/admin/invites/${b.dataset.toggle}/revoke`, "POST", { revoked: b.dataset.revoked === "1" }); load(); }));
+    document.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", async () => { if (confirm("Delete this link? People who joined through it go back to the free minute.")) { await call(`/api/admin/invites/${b.dataset.del}`, "DELETE"); load(); } }));
+  }
+  async function enter() {
+    key = $("#key").value.trim() || key;
+    try { await load(); try { localStorage.setItem("cramly.admin", key); } catch (e) { /* ignore */ } $("#gate-err").hidden = true; }
+    catch (e) { $("#gate-err").hidden = false; $("#gate-err").textContent = e.message; }
+  }
+  $("#enter").addEventListener("click", enter);
+  $("#key").addEventListener("keydown", (e) => { if (e.key === "Enter") enter(); });
+  $("#make").addEventListener("click", async () => {
+    try {
+      const d = await call("/api/admin/invites", "POST", { label: $("#label").value, uses_max: +$("#uses").value, days: +$("#days").value });
+      try { await navigator.clipboard.writeText(gift(d.invite.link)); toast("Gift message made and copied. Send it to them."); } catch (e) { toast("Link made."); }
+      $("#label").value = ""; load();
+    } catch (e) { toast(e.message); }
+  });
+  if (key) { $("#key").value = key; enter(); }
+</script>
+</body>
+</html>

@@ -5,17 +5,21 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Cramly · study smarter from your own notes</title>
   <meta name="description" content="Upload your notes, slides, PDFs or photos. Cramly turns them into a study plan with a tutor, notes, flashcards and quizzes.">
-  <meta name="theme-color" content="#f7f2e8">
+  <meta name="theme-color" content="#f6f8ff">
   <link rel="icon" href="{{ url_for('static', filename='icon-64.png') }}" type="image/png">
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='icon-192.png') }}">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <script>try { var t = JSON.parse(localStorage.getItem("cramly.theme") || "null"); if (t === "dark" || t === "light") document.documentElement.dataset.theme = t; } catch (e) { /* default */ }</script>
+  <script>window.JOIN = {{ join|tojson }};</script>
+  <script>try { var t = JSON.parse(localStorage.getItem("cramly.theme") || "null"); document.documentElement.dataset.theme = t === "dark" || t === "auto" ? (t === "auto" ? "" : t) : "light"; if (t === "auto") delete document.documentElement.dataset.theme; } catch (e) { /* default */ }</script>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ v }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='premium.css') }}?v={{ v }}">
   <script defer src="{{ url_for('static', filename='app.js') }}?v={{ v }}"></script>
   <script defer src="{{ url_for('static', filename='extras.js') }}?v={{ v }}"></script>
+  <script defer src="{{ url_for('static', filename='premium.js') }}?v={{ v }}"></script>
+  <script defer src="{{ url_for('static', filename='tools.js') }}?v={{ v }}"></script>
 </head>
 <body>
   <!-- first visit -->
@@ -29,7 +33,8 @@
         <button class="btn primary big" type="submit">Start studying →</button>
       </form>
       <button class="link" id="have-code" type="button">I already use Cramly on another device</button>
-      <ul class="ticks"><li>✓ Works with Arabic and English</li><li>✓ No sign-up, no password</li><li>✓ Free</li></ul>
+      <ul class="ticks"><li>✓ Works with Arabic and English</li><li>✓ No sign-up, no password</li><li>✓ Try everything free for 1 minute</li></ul>
+      <div class="pitch"><b>⭐ Cramly Premium</b><p>Your first minute is free and has every feature. After that, premium is <span class="price"><s>$2.99</s></span> but it is a free gift when you get an invite from Awsaa: message <a href="mailto:Awsaa.libdeh@gmail.com?subject=Cramly%20premium%20please">Awsaa.libdeh@gmail.com</a>.</p></div>
     </div>
     <div class="w-right" aria-hidden="true">
       <div class="demo d1"><span>📄</span><b>Chapter 3.pdf</b><small>→ 11 topics</small></div>

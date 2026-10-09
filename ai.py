@@ -199,17 +199,26 @@ doesn't support. {LANG}"""
     return ask_json(system, _topic_prompt(topic, context), NOTES_SCHEMA, "notes")["notes"].strip()
 
 
-def make_cards(topic, context, n=10):
+def make_cards(topic, context, n=10, avoid=()):
     system = f"""You write flashcards for ONE topic from the student's material. {n} cards: each front is a question, term or prompt
 (never a yes/no question); each back is a short, complete answer (1-2 sentences). Cover the most important ideas first. No two cards
 asking the same thing. {LANG}"""
-    return ask_json(system, _topic_prompt(topic, context), CARDS_SCHEMA, "cards", effort="minimal")["cards"]
+    note = ("\nThe student already has cards for: " + " | ".join(list(avoid)[:40]) + "\nWrite DIFFERENT ones.") if avoid else ""
+    return ask_json(system, _topic_prompt(topic, context) + note, CARDS_SCHEMA, "cards", effort="minimal")["cards"]
 
 
-def make_quiz(topic, context, n=6):
+LEVELS = {
+    "easy": "Difficulty: EASY: straight recall of definitions and key facts.",
+    "medium": "Difficulty: MEDIUM: a mix of recall and understanding.",
+    "hard": "Difficulty: HARD: application, comparison and 'what would happen if' reasoning; wrong options built on subtle mix-ups.",
+    "mixed": "Difficulty: MIXED: some easy, mostly medium, a few hard.",
+}
+
+
+def make_quiz(topic, context, n=6, level="medium"):
     system = f"""You write a multiple-choice quiz for ONE topic from the student's material: {n} questions, exactly 4 options each,
-one clearly right answer, the wrong ones plausible but clearly wrong to someone who studied. Mix recall and understanding. Spread the
-right answer over positions A-D. No "all of the above". `why` explains the answer in one sentence. {LANG}"""
+one clearly right answer, the wrong ones plausible but clearly wrong to someone who studied. {LEVELS.get(level, LEVELS["medium"])}
+Spread the right answer over positions A-D. No "all of the above". `why` explains the answer in one sentence. {LANG}"""
     good = []
     for _ in range(2):                                               # a short or broken quiz gets one more try
         qs = ask_json(system, _topic_prompt(topic, context), QUIZ_SCHEMA, "quiz", effort="low")["questions"]
@@ -257,6 +266,62 @@ Never penalise simple wording. Reply in the language the student wrote in."""
     return r
 
 
+PODCAST_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["title", "lines"], "properties": {
+    "title": {"type": "string"},
+    "lines": {"type": "array", "items": {"type": "object", "additionalProperties": False, "required": ["host", "text"],
+                                          "properties": {"host": {"type": "string", "enum": ["A", "B"]}, "text": {"type": "string"}}}}}}
+
+
+def make_podcast(topic, context):
+    """A short two-host episode about one topic: easy to listen to on a walk."""
+    system = f"""You write a short, friendly audio episode (a podcast) for a student, about ONE topic from their material.
+Two hosts: A (curious, asks the questions a student would ask, a little funny) and B (knows the material, explains with simple
+examples and analogies). About 450-550 words in total: 22-28 lines of 15-35 words each, spoken language (contractions, no bullet points, no markdown).
+Flow: a quick hook, then 3-4 key ideas one at a time, an everyday example, a 2-question recap where A asks and B answers, a warm
+sign-off. Say only what the material supports. `title` is a catchy episode name. {LANG}"""
+    ep = ask_json(system, _topic_prompt(topic, context), PODCAST_SCHEMA, "podcast", effort="low")
+    ep["lines"] = [l for l in ep["lines"] if l["text"].strip()]
+    return ep
+
+
+SHEET_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["sheet"], "properties": {"sheet": {"type": "string"}}}
+
+
+def make_cheatsheet(title, digest):
+    """One page of the most exam-relevant things across the whole study set."""
+    system = f"""You make a ONE-PAGE exam cheat sheet from a student's study set. Markdown: for each topic a ## heading and 3-6 tight
+bullets (key definitions, formulas, rules, dates, steps) with **bold** key terms, at most about 60 words per topic; add a final
+"## Common mistakes" with 3-5 bullets and a "## Memory tricks" with 2-3 mnemonics or one-liners. It must fit on one printed page
+(around 600-800 words in total, fewer for small sets): dense, scannable, no filler. Use only what the material says. {LANG}"""
+    return ask_json(system, f"STUDY SET: {title}\n\n{digest}", SHEET_SCHEMA, "sheet", effort="low")["sheet"].strip()
+
+
+SOLVE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["solution", "final"], "properties": {
+    "solution": {"type": "string", "description": "the worked solution in markdown, step by step"},
+    "final": {"type": "string", "description": "the final answer in one short line"}}}
+
+
+def solve(question, image=None, mime="image/png", context=""):
+    """A question typed or photographed (a textbook problem, a past paper): worked out step by step, using the student's own material."""
+    system = f"""You are a patient tutor. The student sends a question (typed, as a photo, or both). Solve it step by step: show each step in
+plain language, name the idea or formula used at each step, and finish with a clear final answer. Then add one line on the concept to review.
+If the question is about the student's material, use their material (below) and its notation. If you cannot read part of the photo, say which
+part. Reply in the language of the question. Markdown.
+
+THE STUDENT'S MATERIAL (may help):
+{context[:7000]}"""
+    parts = []
+    if question.strip():
+        parts.append({"type": "input_text", "text": question.strip()})
+    if image:
+        b64 = base64.b64encode(image).decode()
+        parts.append({"type": "input_image", "image_url": f"data:{mime};base64,{b64}"})
+    body = {"model": MODEL, "reasoning": {"effort": "low"},
+            "input": [{"role": "system", "content": system}, {"role": "user", "content": parts or [{"type": "input_text", "text": "(no question)"}]}],
+            "text": {"format": {"type": "json_schema", "name": "solve", "schema": SOLVE_SCHEMA, "strict": True}}}
+    return json.loads(_text(_call(body, timeout=170)))
+
+
 # ---------- the tutor ----------
 def _sse(resp):
     for raw in resp.iter_lines():
@@ -282,9 +347,17 @@ and briefly (under 150 words unless they ask for more): lead with the answer, th
 help from general knowledge and mark it "(beyond your notes)". Use markdown lightly: bullets and **bold** terms."""
 
 
-def chat(mode, context, messages):
+STYLES = {
+    "eli5": "STYLE: explain like the student is 10 years old: tiny words, everyday comparisons, short sentences, then one real term.",
+    "coach": "STYLE: be an exam coach: focus on what examiners ask, point out common traps, give a mark-scheme style answer, keep it brisk.",
+    "strict": "STYLE: be a strict Socratic tutor: don't give the answer straight away, ask a guiding question first, and only explain after two tries.",
+    "buddy": "STYLE: be a funny study buddy: casual, light jokes, emojis now and then, but always accurate.",
+}
+
+
+def chat(mode, context, messages, style=""):
     """Yield the tutor's reply piece by piece."""
-    system = (GUIDED if mode == "guided" else ASK) + "\nReply in the language the student writes in.\n\n" + context
+    system = (GUIDED if mode == "guided" else ASK) + "\n" + STYLES.get(style, "") + "\nReply in the language the student writes in.\n\n" + context
     body = {"model": MODEL, "stream": True, "reasoning": {"effort": "minimal"},
             "input": [{"role": "system", "content": system}] + messages[-14:]}
     with requests.post(URL, headers=_headers(), json=body, stream=True, timeout=(10, 120)) as resp:

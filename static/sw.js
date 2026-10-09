@@ -13,6 +13,6 @@ self.addEventListener("fetch", (e) => {
     return;
   }
   if (e.request.mode === "navigate") {
-    e.respondWith(fetch(e.request).then((r) => { const copy = r.clone(); caches.open(CACHE).then((c) => c.put("/", copy)); return r; }).catch(() => caches.match("/")));
+    e.respondWith(fetch(e.request).then((r) => { if (url.pathname === "/") { const copy = r.clone(); caches.open(CACHE).then((c) => c.put("/", copy)); } return r; }).catch(() => caches.match("/")));
   }
 });
