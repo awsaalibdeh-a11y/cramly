@@ -89,6 +89,7 @@ function afterShell() {
   $("#aura-chip")?.addEventListener("click", auraSheet);
   $("#side-aura")?.addEventListener("click", auraSheet);
   $("#focus-chip")?.addEventListener("click", focusSheet);
+  $("#pal-btn")?.addEventListener("click", openPalette);
   $$("#tabbar [data-ic], #view [data-ic]").forEach((el) => { el.innerHTML = ic(el.dataset.ic); });
   focusTick();
   wireAccess();

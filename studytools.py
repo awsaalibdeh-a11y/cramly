@@ -24,7 +24,7 @@ IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
 def register(core):
     app, db, ai = core.app, core.db, core.ai
     select, insert, update, delete = core.select, core.insert, core.update, core.delete
-    need_user, need_ai, own_set, own_topic, limited, log = core.need_user, core.need_ai, core.own_set, core.own_topic, core.limited, core.log
+    need_user, need_premium, need_ai, own_set, own_topic, limited, log = core.need_user, core.need_premium, core.need_ai, core.own_set, core.own_topic, core.limited, core.log
 
     def busy_limit():
         return jsonify(error="That's a lot of study material in an hour. Take a short break and come back."), 429
@@ -37,7 +37,7 @@ def register(core):
 
     # ---------------------------------------------------------------- podcast
     @app.get("/api/topics/<int:topic_id>/podcast")
-    @need_user
+    @need_premium
     def podcast(user, topic_id):
         t = own_topic(user, topic_id)
         if not t:
@@ -63,7 +63,7 @@ def register(core):
 
     # ---------------------------------------------------------------- cheat sheet
     @app.get("/api/sets/<int:set_id>/cheatsheet")
-    @need_user
+    @need_premium
     def cheatsheet(user, set_id):
         s = own_set(user, set_id)
         if not s:
@@ -99,7 +99,7 @@ def register(core):
 
     # ---------------------------------------------------------------- snap & solve
     @app.post("/api/solve")
-    @need_user
+    @need_premium
     def solve(user):
         question = (request.form.get("text") or "").strip()[:3000]
         f = request.files.get("image")
@@ -135,7 +135,7 @@ def register(core):
 
     # ---------------------------------------------------------------- exam builder: a fresh quiz on the topics you pick
     @app.post("/api/sets/<int:set_id>/quiz")
-    @need_user
+    @need_premium
     def custom_quiz(user, set_id):
         if not own_set(user, set_id):
             return jsonify(error="Study set not found."), 404

@@ -20,7 +20,7 @@ from flask import jsonify, render_template, request
 def register(core):
     app, db, ai = core.app, core.db, core.ai
     select, insert, update = core.select, core.insert, core.update
-    need_user, need_plus, need_ai, own_set, own_topic, limited, log = core.need_user, core.need_plus, core.need_ai, core.own_set, core.own_topic, core.limited, core.log
+    need_user, need_premium, need_plus, need_ai, own_set, own_topic, limited, log = core.need_user, core.need_premium, core.need_plus, core.need_ai, core.own_set, core.own_topic, core.limited, core.log
 
     def ai_error(exc):
         if isinstance(exc, ai.AIError):
@@ -76,7 +76,7 @@ def register(core):
             return ai_error(exc)
 
     @app.get("/api/sets/<int:set_id>/glossary")
-    @need_user
+    @need_premium
     def glossary(user, set_id):
         return cached_set(user, set_id, "glossary", ai.make_glossary, "terms")
 

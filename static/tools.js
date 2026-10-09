@@ -17,12 +17,17 @@ const prettyDay = (iso) => new Date(`${iso}T12:00`).toLocaleDateString([], { day
 /* ---------- entry points ---------- */
 function moreTools(set) {
   const id = set.id;
-  return `<h2 class="sec">More ways to study <small>premium tools, free to try for a minute</small></h2>
+  const card = (href, art, name, sub, plan, bg) => `<a class="mode" style="--bg:${bg}" href="${href}"><div class="art">${art}</div><div class="txt"><small>${sub}</small><b>${name} ${planTag(plan)}</b></div></a>`;
+  return `<h2 class="sec">Study tools <small>Free, Premium and Premium Plus</small></h2>
     <div class="modes four tools">
-      <a class="mode" style="--bg:var(--sky-bg)" href="#/set/${id}/map"><div class="art">🕸️</div><div class="txt"><small>See the big picture</small><b>Mind map</b></div></a>
-      <a class="mode" style="--bg:var(--butter)" href="#/set/${id}/cheat"><div class="art">📄</div><div class="txt"><small>One page, printable</small><b>Cheat sheet</b></div></a>
-      <a class="mode" style="--bg:var(--peach)" href="#/set/${id}/exam"><div class="art">⏱️</div><div class="txt"><small>Timed, your topics</small><b>Exam builder</b></div></a>
-      <a class="mode" style="--bg:var(--rose-bg)" href="#/solve/${id}"><div class="art">📸</div><div class="txt"><small>Photo to answer</small><b>Snap and solve</b></div></a>
+      ${card(`#/set/${id}/map`, "🕸️", "Mind map", "See the big picture", "free", "var(--sky-bg)")}
+      ${card(`#/set/${id}/cheat`, "📄", "Cheat sheet", "One page, printable", "premium", "var(--butter)")}
+      ${card(`#/set/${id}/exam`, "⏱️", "Exam builder", "Timed, your topics", "premium", "var(--peach)")}
+      ${card(`#/set/${id}/glossary`, "📖", "Glossary", "Every key term", "premium", "var(--mint-bg)")}
+      ${card(`#/solve/${id}`, "📸", "Snap and solve", "Photo to answer", "premium", "var(--rose-bg)")}
+      ${card(`#/set/${id}/predictor`, "🔮", "Exam predictor", "Likely questions", "plus", "var(--lilac-2)")}
+      ${card(`#/set/${id}/mixups`, "🔀", "Mix-ups", "Tell look-alikes apart", "plus", "var(--butter)")}
+      <button class="mode" id="share-set" type="button" style="--bg:var(--sky-bg)"><div class="art">🔗</div><div class="txt"><small>Send it to a friend</small><b>Share this set ${planTag("plus")}</b></div></button>
     </div>`;
 }
 function toolsStrip() {
@@ -36,16 +41,24 @@ function setRoute(sub) {
   if (sub === "map") return mapView();
   if (sub === "cheat") return cheatView();
   if (sub === "exam") return examView();
+  if (sub === "glossary") return glossaryView();
+  if (sub === "predictor") return predictorView();
+  if (sub === "mixups") return mixupsView();
   return undefined;
 }
 function topicRoute(kind, sub, tid) {
   if (kind === "listen") return listenView(tid);
   if (kind === "cards" && sub === "edit") return cardEditView(tid);
+  if (kind === "boost") return boostView(tid);
+  if (kind === "lab") return labView(tid);
+  if (kind === "grade") return gradeView(tid);
+  if (kind === "notes") return notesView(tid);
   return undefined;
 }
 function globalRoute(p) {
   if (p[0] === "solve") return solveView(+p[1] || 0);
   if (p[0] === "progress") return statsView();
+  if (p[0] === "focus") return Promise.resolve(focusView());
   return undefined;
 }
 

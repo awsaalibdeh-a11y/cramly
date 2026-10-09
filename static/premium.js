@@ -32,16 +32,17 @@ const FEATURES = [
 /* ---------- the little chip in the top bar ---------- */
 function accessChip() {
   if (!S.me) return "";
-  if (S.me.premium) return `<span class="chip-btn prem" id="acc-chip" title="Premium is on">${ic("star")}<b>Premium</b></span>`;
+  if (S.me.premium) return `<button class="chip-btn prem ${planNow()}" id="acc-chip" title="Your plan">${ic("star")}<b>${S.me.plan === "plus" ? "Plus" : "Premium"}</b></button>`;
+  if (S.me.locked) return `<button class="chip-btn trial locked" id="acc-chip" title="Your free minute is used">${ic("lock")}<b>Free plan</b></button>`;
   const left = Math.max(0, Math.round(S.me.trial_left ?? 0));
-  return `<button class="chip-btn trial ${left <= 15 ? "hot" : ""}" id="acc-chip" title="Free time left">${ic("timer")}<b id="acc-left">${clock(left)}</b><span class="lbl">free</span></button>`;
+  return `<button class="chip-btn trial ${left <= 15 ? "hot" : ""}" id="acc-chip" title="Free minute of premium tools left">${ic("timer")}<b id="acc-left">${clock(left)}</b><span class="lbl">free</span></button>`;
 }
 function wireAccess() {
-  $("#acc-chip")?.addEventListener("click", () => { if (!S.me?.premium) upgradeSheet(); });
+  $("#acc-chip")?.addEventListener("click", () => plansSheet(S.me?.premium ? "plus" : "premium"));
   if (S.me?.banned) showGate("banned", S.me);
   else if (S.me?.timeout_until) showGate("timeout", S.me);
   else if (S.me?.maintenance) showGate("maintenance", { message: S.me.maintenance_msg });
-  else if (S.me?.locked && !S.me?.premium) showPaywall();
+  else if (S.me?.locked && !S.me?.premium && !softSeen()) minuteOverNotice();
   showInbox();
   startBeat();
 }
@@ -58,7 +59,7 @@ function paintLeft() {
 async function beat() {
   if (!key || document.hidden || $("#paywall") || $("#gate")) return;
   try {
-    const r = await fetch("/api/beat", { method: "POST", headers: baseHeaders() });
+    const r = await fetch("/api/beat", { method: "POST", headers: { ...baseHeaders(), "Content-Type": "application/json" }, body: JSON.stringify({ tool: isToolView() }) });
     if (!r.ok) return;
     const d = await r.json();
     S.me = { ...S.me, ...d };
@@ -67,14 +68,15 @@ async function beat() {
     if (d.timeout_until) return showGate("timeout", d);
     if (d.maintenance) return showGate("maintenance", { message: d.maintenance_msg });
     showInbox();
-    if (d.locked && !d.premium) showPaywall(d);
+    if (d.locked && !d.premium && !softSeen()) minuteOverNotice();
   } catch { /* offline: the next beat will catch up */ }
 }
 function startBeat() {
   if (beatTimer) return;
   beatTimer = setInterval(beat, 5000);
+  startNudge();
   tickTimer = setInterval(() => {
-    if (!S.me || S.me.premium || document.hidden || $("#paywall")) return;
+    if (!S.me || S.me.premium || document.hidden || $("#paywall") || !isToolView()) return;
     S.me.trial_left = Math.max(0, (S.me.trial_left ?? 0) - 1);
     paintLeft();
     if (S.me.trial_left <= 0) beat();
@@ -97,7 +99,23 @@ async function useLink(text, onBad) {
   if (!code) return onBad("That does not look like a premium link.");
   if (await redeemJoin(code, { quiet: false })) location.reload();
 }
+/** The free minute ended: say so once, gently. Nothing is locked; only the premium tools wait for an invite. */
+function minuteOverNotice() {
+  try { sessionStorage.setItem("cramly.soft", "1"); } catch { /* fine */ }
+  if ($("#snack")) return;
+  const el = document.createElement("div");
+  el.id = "snack"; el.className = "snack"; el.setAttribute("role", "status");
+  el.innerHTML = `<span>⏱</span><div><b>Your free minute of premium tools is over.</b><small>Everything free stays open: reading, reviews, notes, focus room and more.</small></div><button class="btn small primary" id="snack-plans" type="button">See plans</button><button class="icon-btn" id="snack-x" aria-label="Dismiss">✕</button>`;
+  document.body.append(el);
+  const gone = () => el.remove();
+  $("#snack-plans").addEventListener("click", () => { gone(); plansSheet("premium"); });
+  $("#snack-x").addEventListener("click", gone);
+  setTimeout(gone, 14000);
+  paintLeft(); const chip = $("#acc-chip"); if (chip && !S.me.premium) chip.outerHTML = accessChip(), $("#acc-chip")?.addEventListener("click", () => plansSheet("premium"));
+}
+const softSeen = () => { try { return sessionStorage.getItem("cramly.soft") === "1"; } catch { return false; } };
 function showPaywall(info = {}) {
+  if (info.plus) { if (S.me) S.me.locked = !S.me.premium; return plusSheet(info); }
   if (S.me) { S.me.locked = true; S.me.trial_left = 0; }
   if ($("#paywall")) return;
   window.leaveView?.();
@@ -107,26 +125,39 @@ function showPaywall(info = {}) {
   el.id = "paywall";
   el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "pw-title");
   el.innerHTML = `<div class="pw-card">
-      <span class="pw-badge">${ic("timer")} Free minute used</span>
-      <h1 id="pw-title">Your free minute is up</h1>
-      <p class="pw-lead">You have tried the premium tools. To keep studying with Cramly, <b>message Awsaa for premium</b>. Premium normally costs <b>$2.99</b>, but it is a <b>free gift</b> when you are invited. Message and you will get a personal link that unlocks everything.</p>
-      <a class="btn primary big pw-mail" id="pw-mail" href="${esc(mailLink())}">${ic("mail")} Message Awsaa for premium</a>
+      <span class="pw-badge">${ic("timer")} Free minute used up</span>
+      <h1 id="pw-title">That one needs Premium</h1>
+      <p class="pw-lead">That tool is part of Premium. The free minute to try it is over, but <b>the rest of Cramly stays free</b>. To use it again, <b>message Awsaa for premium</b>. Premium normally costs <b>$2.99</b>, but it is a <b>free gift</b> when you are invited. Message and you will get a personal link that unlocks everything.</p>
+      <button class="btn primary big pw-mail" id="pw-ask" type="button">${ic("mail")} Message Awsaa here</button>
+      <a class="link" id="pw-mail" href="${esc(mailLink())}">or send an email instead</a>
       <div class="pw-addr"><code>${esc(info.contact || contact())}</code><button class="btn small" id="pw-copy" type="button">${ic("copy")} Copy</button></div>
       <ul class="pw-list">${FEATURES.map(([e, t]) => `<li><span>${e}</span>${esc(t)}</li>`).join("")}</ul>
       <details class="pw-have"><summary>I already have a premium link</summary>
         <div class="pw-row"><input id="pw-link" placeholder="Paste your link here" aria-label="Premium link" autocomplete="off"><button class="btn" id="pw-go" type="button">Unlock</button></div>
         <p class="pw-err" id="pw-err" hidden></p><p class="muted small">Or just open the link on this device and it unlocks by itself.</p></details>
-      <p class="muted small pw-safe">Your study sets are safe. They will be right here when you unlock.</p></div>`;
+      <button class="link" id="pw-plans" type="button">Compare the plans</button>
+      <button class="btn big" id="pw-free" type="button">Keep using the free tools</button>
+      <p class="muted small pw-safe">Your study sets are safe. Reading, reviewing, the mind map, notes and the focus room stay free.</p></div>`;
   document.body.append(el);
   document.documentElement.classList.add("pw-open");
   ["#app", "#welcome", "#tabbar"].forEach((s) => { const n = $(s); if (n) n.inert = true; });
+  $("#pw-plans").addEventListener("click", () => plansSheet("premium"));
+  $("#pw-ask").addEventListener("click", () => { $("#pw-free").click(); setTimeout(() => askSheet("premium"), 150); });
+  el.addEventListener("click", (e) => { if (e.target === el) $("#pw-free").click(); });
+  el.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#pw-free").click(); });
   $("#pw-copy").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText(contact()); toast("Email copied"); } catch { prompt("Copy this email:", contact()); }
   });
   const unlock = () => useLink($("#pw-link").value, (m) => { const e = $("#pw-err"); e.hidden = false; e.textContent = m; });
   $("#pw-go").addEventListener("click", unlock);
   $("#pw-link").addEventListener("keydown", (e) => { if (e.key === "Enter") unlock(); });
-  setTimeout(() => $("#pw-mail")?.focus(), 80);
+  $("#pw-free").addEventListener("click", () => {
+    try { sessionStorage.setItem("cramly.soft", "1"); } catch { /* fine */ }
+    el.remove(); document.documentElement.classList.remove("pw-open");
+    ["#app", "#welcome", "#tabbar"].forEach((s) => { const n = $(s); if (n) n.inert = false; });
+    paintLeft(); route();
+  });
+  setTimeout(() => $("#pw-ask")?.focus(), 80);
 }
 
 /* ---------- opening a premium link ---------- */
@@ -166,6 +197,7 @@ function giftSheet(r = {}) {
 
 /* ---------- the upgrade sheet (the chip) and the account block in Settings ---------- */
 function upgradeSheet() {
+  if (S.me?.trial_left <= 0) return plansSheet("premium");
   const left = Math.max(0, Math.round(S.me?.trial_left ?? 0));
   sheet(`<h3>${ic("timer")} ${clock(left)} of free time left</h3>
     <p class="muted">Everything in Cramly works for your first minute. After that, premium keeps it going. It is by invitation: message Awsaa and you will get a personal link.</p>
@@ -173,12 +205,13 @@ function upgradeSheet() {
     <div class="sheet-actions"><button class="btn" data-close>Keep studying</button><a class="btn primary" href="${esc(mailLink())}">${ic("mail")} Message Awsaa</a></div>`);
 }
 function accountBlock() {
-  if (S.me?.premium) return `<div class="acc-card prem">${ic("star")}<div><b>Premium</b><small>${S.me.premium_until ? `Until ${new Date(S.me.premium_until * 1000).toLocaleDateString()}` : "Everything is unlocked, with no time limit."} A gift from Awsaa (normally $2.99).</small></div></div>`;
-  return `<div class="acc-card">${ic("timer")}<div><b>Free: ${clock(S.me?.trial_left ?? 0)} left</b><small>Premium is by invitation. Message ${esc(contact())}.</small></div>
-    <a class="btn small primary" href="${esc(mailLink())}">Get premium</a></div>
+  if (S.me?.premium) return `<div class="acc-card prem">${ic("star")}<div><b>${PLAN_NAMES[S.me.plan] || "Premium"}</b><small>${S.me.premium_until ? `Until ${new Date(S.me.premium_until * 1000).toLocaleDateString()}` : "Everything is unlocked, with no time limit."} A gift from Awsaa (normally $2.99).</small></div></div>`;
+  return `<div class="acc-card">${ic("timer")}<div><b>Free: ${clock(S.me?.trial_left ?? 0)} left</b><small>Premium is a free gift from Awsaa if you ask.</small></div>
+    <button class="btn small primary" id="s-ask" type="button">Ask for premium</button></div>
     <button class="link" id="s-haslink" type="button">I have a premium link</button>`;
 }
 function wireAccountBlock() {
+  $("#s-ask")?.addEventListener("click", () => { closeSheet(); setTimeout(() => askSheet("premium"), 150); });
   $("#s-haslink")?.addEventListener("click", async () => {
     const v = await askText({ title: "Premium link", label: "Paste it here", ok: "Unlock" });
     if (v) useLink(v, (m) => toast(m, true));
@@ -246,4 +279,78 @@ function showInbox() {
     S.me.inbox = [];
     try { await api("/api/messages/read", { body: {} }); } catch { /* shown again next time */ }
   }, { once: true });
+}
+
+/* ---------- the three plans ---------- */
+const PLAN_NAMES = { free: "Free", premium: "Premium", plus: "Premium Plus" };
+const PLANS = [
+  { id: "free", icon: "🌱", name: "Free", tag: "forever", items: ["Read and review everything you made", "Flashcard reviews and daily review", "Mind map, progress, calendar", "My notes, focus room with sounds", "Themes, search, daily goal", "1 free minute of every AI tool", "3 study sets, files up to 25 MB"] },
+  { id: "premium", icon: "⭐", name: "Premium", tag: "normally $2.99", items: ["Everything in Free", "Unlimited AI tutor, notes, cards and quizzes", "Listen: two-host podcast of any topic", "Cheat sheets, snap and solve, exam builder", "Glossary and swipe game", "30 study sets, files up to 200 MB"] },
+  { id: "plus", icon: "✨", name: "Premium Plus", tag: "the top plan", items: ["Everything in Premium", "Exam predictor with model answers", "Write and grade: your answer marked", "Mix-ups, memory boost, practice lab", "Share study sets by link", "A smarter AI model", "100 study sets, files up to 1 GB"] },
+];
+const planNow = () => S.me?.plan || (S.me?.premium ? "premium" : "free");
+function plansHtml(highlight) {
+  return `<div class="plan-cards">${PLANS.map((p) => `<article class="plan-card ${p.id} ${planNow() === p.id ? "now" : ""} ${highlight === p.id ? "hl" : ""}"><header><span>${p.icon}</span><div><b>${p.name}</b><small>${p.tag}</small></div>${planNow() === p.id ? '<em>Your plan</em>' : ""}</header>
+    <ul>${p.items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul></article>`).join("")}</div>`;
+}
+function plansSheet(highlight = "premium", lead = "") {
+  sheet(`<h3>Choose your plan</h3>${lead ? `<p class="muted">${esc(lead)}</p>` : ""}${requestNote()}${plansHtml(highlight)}
+    <p class="muted small">Premium normally costs $2.99 and Awsaa gifts it to people who ask. Message here in the app, or email ${esc(contact())}.</p>
+    <div class="sheet-actions"><button class="btn" data-close>Not now</button>${askButtons(highlight)}</div>`, () => wireAsk(highlight === "plus" ? "plus" : "premium"));
+}
+function plusSheet(info = {}) {
+  sheet(`<div class="gift"><div class="gift-ico">✨</div><h3>${esc(info.error || "This is a Premium Plus tool")}</h3>
+    <p class="muted">${S.me?.premium ? "You have Premium. This tool is part of Premium Plus, the top plan." : "Free accounts can try it during the first minute. After that it is part of Premium Plus."}</p>
+    ${plansHtml("plus")}<div class="sheet-actions"><button class="btn" data-close>Close</button>${askButtons("plus")}</div></div>`, () => wireAsk("plus"));
+}
+
+/* ---------- asking for a plan: in the app (it reaches the owner panel) or by email ---------- */
+const TOOL_VIEW = /\/(listen|boost|lab|grade|cheat|exam|glossary|predictor|mixups)\b|#\/solve/;
+const isToolView = () => TOOL_VIEW.test(location.hash);
+function requestNote() {
+  const r = S.me?.request;
+  if (!r || S.me?.premium && r.status !== "pay") return "";
+  const text = { pending: "Your request is with Awsaa. You will get the answer here.", pay: `Awsaa replied: ${PLAN_NAMES[r.plan] || "the plan"} is ${r.price || "$2.99"}. Check your messages for how to pay.`, declined: "Your last request was not approved. You can ask again.", free: "", paid: "" }[r.status];
+  return text ? `<p class="note-card req-note">${esc(text)}</p>` : "";
+}
+function askSheet(plan = "premium") {
+  let pick = plan === "plus" ? "plus" : "premium";
+  sheet(`<h3>💌 Ask Awsaa for a plan</h3><p class="muted">Write a short message. Awsaa sees it in their panel and answers you right here in the app. Prefer email? <a href="${esc(mailLink())}">Send an email instead</a>.</p>
+    <div class="seg" id="ask-plan"><button type="button" data-p="premium">⭐ Premium</button><button type="button" data-p="plus">✨ Premium Plus</button></div>
+    ${S.me?.name ? "" : '<label>Your name<input id="ask-name" maxlength="40" autocomplete="given-name"></label>'}
+    <label>Your message <span class="muted">(optional)</span><textarea id="ask-msg" rows="4" maxlength="800" placeholder="e.g. I am studying for my biology exam and Cramly helps a lot."></textarea></label>
+    <div class="sheet-actions"><button class="btn" data-close>Cancel</button><button class="btn primary" id="ask-send" type="button">Send to Awsaa</button></div>`, () => {
+    const mark = () => $$("#ask-plan button").forEach((b) => b.classList.toggle("on", b.dataset.p === pick));
+    mark();
+    $$("#ask-plan button").forEach((b) => b.addEventListener("click", () => { pick = b.dataset.p; mark(); }));
+    $("#ask-send").addEventListener("click", async (e) => {
+      const btn = e.currentTarget; btn.disabled = true;
+      try {
+        await api("/api/request", { body: { plan: pick, message: $("#ask-msg").value, name: $("#ask-name")?.value || "" } });
+        S.me = { ...S.me, request: { status: "pending", plan: pick } };
+        closeSheet();
+        sheet(`<div class="gift"><div class="gift-ico">📨</div><h3>Sent to Awsaa</h3><p class="muted">You will get the answer right here in the app, usually soon. Keep using the free tools meanwhile.</p><button class="btn primary big" data-close type="button">Great</button></div>`);
+      } catch (err) { toast(err.message, true); btn.disabled = false; }
+    });
+  });
+}
+const askButtons = (plan) => `<button class="btn primary" id="ask-open" type="button">${ic("mail")} Message Awsaa here</button><a class="btn" href="${esc(mailLink())}">Email instead</a>`;
+function wireAsk(plan) { $("#ask-open")?.addEventListener("click", () => { closeSheet(); askSheet(plan); }); }
+
+/* ---------- every 10 minutes of use, a free account gets a friendly nudge ---------- */
+function startNudge() {
+  setInterval(() => {
+    if (!S.me || S.me.premium || document.hidden || !key) return;
+    ls.set("cramly.nudgeSecs", ls.get("cramly.nudgeSecs", 0) + 20);
+    if (ls.get("cramly.nudgeSecs", 0) < 600) return;
+    if ($("#paywall") || $("#gate") || $("#palette") || $("#snack") || $("#sheet")?.open) return;
+    ls.set("cramly.nudgeSecs", 0);
+    if (S.me.request?.status === "pending") return;
+    nudgeSheet();
+  }, 20000);
+}
+function nudgeSheet() {
+  sheet(`<div class="gift"><div class="gift-ico">⭐</div><h3>Want Premium?</h3>
+    <p>Premium normally costs <b>$2.99</b>, but Awsaa gifts it to people who ask. Send a quick message and the answer comes back right here.</p>
+    <div class="sheet-actions"><button class="btn" data-close>Maybe later</button>${askButtons("premium")}</div></div>`, () => wireAsk("premium"));
 }

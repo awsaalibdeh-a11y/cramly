@@ -390,8 +390,14 @@ class Access(Base):
         d = self.c.get("/api/me", headers=self.h).get_json()
         self.assertEqual((d["premium"], d["locked"], d["trial_total"]), (False, False, 60))
         self.assertGreater(d["trial_left"], 55)
-        self.assertEqual(self.c.get("/api/sets", headers=self.h).status_code, 200)
-        self.set_user(trial_used=59.9, last_seen=server.time.time() - 3)
+        for _ in range(3):                                                          # free browsing never runs the clock
+            self.assertEqual(self.c.get("/api/sets", headers=self.h).status_code, 200)
+        self.assertGreater(self.c.get("/api/me", headers=self.h).get_json()["trial_left"], 55)
+        self.c.post("/api/beat", headers=self.h, json={"tool": False})
+        self.assertGreater(self.c.get("/api/me", headers=self.h).get_json()["trial_left"], 55)
+        self.c.post("/api/beat", headers=self.h, json={"tool": True})               # but being inside a premium tool does
+        self.assertLessEqual(self.c.get("/api/me", headers=self.h).get_json()["trial_left"], 59)
+        self.set_user(trial_used=59.9, trial_at=server.time.time() - 3)
         r = self.c.post("/api/sets", headers=self.h, data={"text": TEXT})
         self.assertEqual(r.status_code, 402)
         self.assertEqual((r.get_json()["locked"], r.get_json()["contact"]), (True, "Awsaa.libdeh@gmail.com"))
@@ -645,7 +651,7 @@ class Tiers(Base):
         tid = self.topics(sid)[0]["id"]
         with mock.patch.object(ai, "make_mixups", return_value=[{"a": "mitosis", "b": "meiosis", "difference": "d", "tip": "t"}]):
             self.assertEqual(self.c.get(f"/api/sets/{sid}/mixups", headers=self.h).status_code, 200)        # inside the free minute
-            self.set_user(trial_used=59.9, last_seen=server.time.time() - 3)
+            self.set_user(trial_used=60)
             r = self.c.get(f"/api/sets/{sid}/mixups?fresh=1", headers=self.h)
             self.assertEqual((r.status_code, r.get_json()["plus"]), (402, True))                            # minute is over
             self.join()                                                                                      # premium, not plus
@@ -722,6 +728,70 @@ class Tiers(Base):
         r = self.c.post("/api/sets", headers=self.h, data={"files": (big, "huge.txt")})
         self.assertEqual((r.status_code, r.get_json()["plan_limit"]), (413, True))
         self.assertIn("Premium Plus", r.get_json()["error"])
+
+
+class PlanRequests(Base):
+    """Asking for a plan inside the app, and the owner deciding."""
+    uid, admin = Access.uid, Access.admin
+
+    def me(self):
+        return self.c.get("/api/me", headers=self.h).get_json()
+
+    def test_ask_then_owner_gives_it_free(self):
+        uid = self.uid()
+        r = self.c.post("/api/request", headers=self.h, json={"plan": "plus", "message": "I am a student with an exam", "name": "Sam"})
+        self.assertEqual((r.status_code, r.get_json()["status"]), (200, "pending"))
+        self.assertEqual(self.me()["request"]["status"], "pending")
+        items = self.admin("get", "/api/admin/requests").get_json()
+        mine = next(i for i in items["requests"] if i["user_id"] == uid)
+        self.assertEqual((mine["plan"], mine["message"], mine["status"]), ("plus", "I am a student with an exam", "pending"))
+        self.assertGreaterEqual(items["pending"], 1)
+        self.assertGreaterEqual(self.admin("get", "/api/admin/overview").get_json()["pending_requests"], 1)
+        done = self.admin("post", f"/api/admin/requests/{mine['id']}/decide", json={"decision": "free", "note": "Good luck!"})
+        self.assertEqual(done.get_json()["status"], "free")
+        d = self.me()
+        self.assertEqual((d["plan"], d["request"]["status"]), ("plus", "free"))
+        self.assertIn("for free", d["inbox"][-1]["body"])
+        self.assertIn("Good luck!", d["inbox"][-1]["body"])
+
+    def test_owner_can_ask_for_payment_then_mark_it_paid(self):
+        self.c.post("/api/request", headers=self.h, json={"plan": "premium", "message": "please"})
+        rid = self.admin("get", "/api/admin/requests").get_json()["requests"][0]["id"]
+        self.admin("post", f"/api/admin/requests/{rid}/decide", json={"decision": "pay", "price": "$2.99", "note": "Send it to my PayPal."})
+        d = self.me()
+        self.assertEqual((d["plan"], d["request"]["status"], d["request"]["price"]), ("free", "pay", "$2.99"))
+        self.assertIn("$2.99", d["inbox"][-1]["body"])
+        self.admin("post", f"/api/admin/requests/{rid}/decide", json={"decision": "paid", "days": 30})
+        d = self.me()
+        self.assertEqual((d["plan"], d["request"]["status"]), ("premium", "paid"))
+        self.assertGreater(d["premium_until"], server.time.time())
+
+    def test_decline_and_validation(self):
+        self.c.post("/api/request", headers=self.h, json={"message": "hi"})
+        rid = self.admin("get", "/api/admin/requests").get_json()["requests"][0]["id"]
+        self.assertEqual(self.admin("post", f"/api/admin/requests/{rid}/decide", json={"decision": "maybe"}).status_code, 400)
+        self.assertEqual(self.admin("post", "/api/admin/requests/99999/decide", json={"decision": "free"}).status_code, 404)
+        self.admin("post", f"/api/admin/requests/{rid}/decide", json={"decision": "declined"})
+        self.assertEqual(self.me()["request"]["status"], "declined")
+        self.assertEqual(self.me()["plan"], "free")
+
+    def test_asking_again_updates_the_same_request_and_is_rate_limited(self):
+        for i in range(2):
+            self.c.post("/api/request", headers=self.h, json={"message": f"try {i}"})
+        mine = [r for r in self.admin("get", "/api/admin/requests").get_json()["requests"] if r["user_id"] == self.uid()]
+        self.assertEqual((len(mine), mine[0]["message"]), (1, "try 1"))
+        for _ in range(4):                                                          # four separate requests in a day are fine
+            rid = [r for r in self.admin("get", "/api/admin/requests").get_json()["requests"] if r["user_id"] == self.uid()][0]["id"]
+            self.admin("post", f"/api/admin/requests/{rid}/decide", json={"decision": "declined"})
+            self.assertEqual(self.c.post("/api/request", headers=self.h, json={"message": "more"}).status_code in (200, 429), True)
+        rid = [r for r in self.admin("get", "/api/admin/requests").get_json()["requests"] if r["user_id"] == self.uid()][0]["id"]
+        self.admin("post", f"/api/admin/requests/{rid}/decide", json={"decision": "declined"})
+        self.assertEqual(self.c.post("/api/request", headers=self.h, json={"message": "again"}).status_code, 429)
+
+    def test_cannot_ask_for_what_you_have(self):
+        code, _ = Access.make_link(self, plan="plus")
+        self.c.post("/api/join", headers=self.h, json={"code": code})
+        self.assertEqual(self.c.post("/api/request", headers=self.h, json={"plan": "plus"}).status_code, 400)
 
 
 class Reading(unittest.TestCase):

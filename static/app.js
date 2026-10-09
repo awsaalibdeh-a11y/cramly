@@ -70,6 +70,7 @@ async function api(path, { method, body, form, signal } = {}) {
   const d = await r.json().catch(() => ({}));
   if (r.status === 401 && key) { signOut(); throw new Error("Signed out."); }
   if (r.status === 402 && d.locked) { showPaywall(d); throw new Error(d.error || "Free minute used."); }
+  if (r.status === 400 && d.plan_limit || r.status === 413 && d.plan_limit) { plansSheet("premium", d.error); throw new Error(d.error); }
   if (gateScreen(r.status, d)) throw new Error(d.error || "Blocked.");
   if (!r.ok) throw new Error(d.error || "Something went wrong.");
   return d;
@@ -79,7 +80,7 @@ async function stream(path, { body, form, signal }, onEvent) {
   let payload = form;
   if (!form) { headers["Content-Type"] = "application/json"; payload = JSON.stringify(body); }
   const r = await fetch(path, { method: "POST", headers, body: payload, signal });
-  if (!r.ok) { const d = await r.json().catch(() => ({})); if (r.status === 402 && d.locked) showPaywall(d); else gateScreen(r.status, d); throw new Error(d.error || "Something went wrong."); }
+  if (!r.ok) { const d = await r.json().catch(() => ({})); if (r.status === 402 && d.locked) showPaywall(d); else if (d.plan_limit) plansSheet("premium", d.error); else gateScreen(r.status, d); throw new Error(d.error || "Something went wrong."); }
   const reader = r.body.getReader(), dec = new TextDecoder();
   let buf = "";
   for (;;) {
@@ -188,6 +189,7 @@ function shell({ tab = "", set = null, crumbs = [], tutor = false, topicId = 0 }
       <a href="#/record" class="${on("record")}">${ic("mic")}Record lecture</a>
       <a href="#/solve" class="${on("solve")}">${ic("camera")}Snap and solve<span class="badge new">new</span></a>
       <a href="#/progress" class="${on("progress")}">${ic("chart")}Progress</a>
+      <a href="#/focus" class="${on("focus")}">${ic("timer")}Focus room</a>
     </nav>
     ${set ? `
     <a class="current" href="#/set/${sid}"><span class="tile" style="--h:${set.hue}">${esc(set.emoji)}</span><b>${esc(set.title)}</b></a>
@@ -202,6 +204,9 @@ function shell({ tab = "", set = null, crumbs = [], tutor = false, topicId = 0 }
       <a href="#/set/${sid}/exam" class="${on("exam")}">${ic("timer")}Exam builder</a>
       <a href="#/set/${sid}/map" class="${on("map")}">${ic("network")}Mind map</a>
       <a href="#/set/${sid}/cheat" class="${on("cheat")}">${ic("sheet")}Cheat sheet</a>
+      <a href="#/set/${sid}/glossary" class="${on("glossary")}">${ic("book")}Glossary</a>
+      <a href="#/set/${sid}/predictor" class="${on("predictor")}">${ic("sparkle")}Exam predictor<span class="ptag plus">PLUS</span></a>
+      <a href="#/set/${sid}/mixups" class="${on("mixups")}">${ic("swipe")}Mix-ups<span class="ptag plus">PLUS</span></a>
       <a href="#/set/${sid}/match" class="${on("match")}">${ic("puzzle")}Match game</a>
       <a href="#/set/${sid}/add" class="${on("add")}">${ic("upload")}Add material</a>
     </nav>
@@ -215,7 +220,7 @@ function shell({ tab = "", set = null, crumbs = [], tutor = false, topicId = 0 }
     </nav>`;
   $("#top").innerHTML = `
     <div class="crumbs">${crumbs.map((c, i) => (c.href ? `<a href="${c.href}">${esc(c.text)}</a>` : `<span>${esc(c.text)}</span>`) + (i < crumbs.length - 1 ? "<span>›</span>" : "")).join("")}</div>
-    <div class="right">${accessChip()}<button class="chip-btn" id="focus-chip" title="Focus timer"></button>${auraChip()}
+    <div class="right">${accessChip()}${paletteButton()}<button class="chip-btn" id="focus-chip" title="Focus timer"></button>${auraChip()}
       <span class="chip-btn streak ${S.me?.streak ? "" : "cold"}" title="Days in a row you studied">${ic("flame")}<b>${S.me?.streak || 0}</b></span>
       ${set ? `<button class="chip-btn tutor-btn" id="top-tutor">${ic("chat")}<span class="lbl">Tutor</span></button>` : ""}</div>`;
   $$("#tabbar a").forEach((a) => a.classList.toggle("on", a.dataset.tab === tab || (tab === "set" && a.dataset.tab === "home")));
@@ -345,6 +350,7 @@ async function sendChat(text, opts = {}) {
   const ctx = { ...S.ctx };
   let reply = "", err = "";
   try {
+    ls.set("cramly.tutorUsed", true);
     await stream("/api/chat", { body: { set_id: ctx.setId, topic_id: ctx.topicId || null, mode: c.mode, style: ls.get("cramly.style", ""),
       messages: c.msgs.filter((m) => m.role === "user" || m.role === "assistant").map(({ role, content }) => ({ role, content })) } }, (ev) => {
       if (ev.type === "delta") { reply += ev.text; c.live = reply; paintLive(); } else if (ev.type === "error") err = ev.text;
@@ -506,6 +512,7 @@ async function homeView() {
     <div class="home-head"><div><p class="eyebrow">${new Date().toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}</p>
       <h1>${hello()}${me.name ? `, ${esc(me.name)}` : ""} 👋</h1></div>
       <a class="btn primary big" href="#/new">＋ New study set</a></div>
+    <div class="home-extra" id="home-extra"></div>
     ${sets.length ? dashboard(sets) : ""}
     ${toolsStrip()}
     ${sets.length ? `<h2 class="sec">Your study sets <small>${sets.length}</small></h2><div class="sets">${sets.map(card).join("")}
@@ -515,6 +522,7 @@ async function homeView() {
         <div style="display:flex;gap:.6rem;flex-wrap:wrap;justify-content:center"><a class="btn primary big" href="#/new">Upload my notes</a><button class="btn big" id="sample">Try sample notes</button></div></div>`}
   </div>`;
   $("#sample")?.addEventListener("click", () => submitMaterials({ text: SAMPLE, title: "Photosynthesis (sample)" }));
+  paintHomeExtras(sets);
 }
 
 /* ============================================================ making a set */
@@ -638,6 +646,7 @@ async function setView() {
     try { await api(`/api/sets/${set.id}`, { method: "PATCH", body: { exam: v } }); await refreshCur(); S.sets = []; setView(); } catch (e) { toast(e.message, true); }
   };
   $("#export").addEventListener("click", () => exportCards().catch((e) => toast(e.message, true)));
+  $("#share-set")?.addEventListener("click", () => shareSheet(set));
   $("#exam-pill").addEventListener("click", examFn); $("#set-exam")?.addEventListener("click", examFn);
   $("#del-set").addEventListener("click", async () => { if (await confirmSheet({ title: "Delete this study set?", text: "Its topics, flashcards and progress are removed for good.", ok: "Delete", danger: true })) { await api(`/api/sets/${set.id}`, { method: "DELETE" }); S.cur = null; S.sets = []; toast("Deleted"); go("#/"); } });
   pickTopic(activeTopic().id);
@@ -657,6 +666,10 @@ function paintTopic() {
     { k: "match", bg: "var(--butter)", art: "🧩", tag: "Quick game", name: "Match game", st: "" },
     { k: "listen", bg: "var(--sky-bg)", art: "🎧", tag: "Podcast", name: "Listen", st: "" },
     { k: "cardedit", bg: "var(--mint-bg)", art: "✏️", tag: "Your deck", name: "Edit cards", st: "" },
+    { k: "notes", bg: "var(--butter)", art: "📝", tag: "Free", name: "My notes", st: "" },
+    { k: "boost", bg: "var(--peach)", art: "🧠", tag: "Plus", name: "Memory boost", st: "" },
+    { k: "lab", bg: "var(--sky-bg)", art: "⚡", tag: "Plus", name: "Practice lab", st: "" },
+    { k: "grade", bg: "var(--rose-bg)", art: "✍️", tag: "Plus", name: "Write and grade", st: "" },
     { k: "test", bg: "var(--lilac-2)", art: "🎯", tag: "Whole set", name: "Practice test", st: "" },
   ];
   const steps = [["Read", t.has_notes, t.has_notes], ["Cards", t.cards > 0, t.cards > 0], ["Quiz", t.quiz_best >= 0, t.quiz_best >= 80]];
@@ -675,6 +688,7 @@ function paintTopic() {
     else if (m === "read") go(`${base}/read`); else if (m === "cards") go(`${base}/cards`); else if (m === "quiz") go(`${base}/quiz`);
     else if (m === "swipe") go(`${base}/swipe`); else if (m === "explain") go(`${base}/explain`);
     else if (m === "listen") go(`${base}/listen`); else if (m === "cardedit") go(`${base}/cards/edit`);
+    else if (["notes", "boost", "lab", "grade"].includes(m)) go(`${base}/${m}`);
     else if (m === "match") go(`#/set/${set.id}/match`); else if (m === "test") go(`#/set/${set.id}/test`);
   }));
   $$(".ptab").forEach((b) => b.classList.toggle("on", +b.dataset.t === t.id));
@@ -1002,13 +1016,13 @@ async function recordView() {
 async function settingsSheet() {
   sheet(`<h3>⚙️ Settings</h3>${accountBlock()}<label>Your name<input id="s-name" value="${esc(S.me.name || "")}" maxlength="30"></label>
     <div class="sheet-actions"><button class="btn primary" id="s-save">Save</button></div><hr>
-    <label>Look<div class="seg" id="s-theme"><button data-t="auto">Auto</button><button data-t="light">Light</button><button data-t="dark">Dark</button></div></label><hr>
+    <label>Accent colour${accentPicker()}</label><label>Look<div class="seg" id="s-theme"><button data-t="auto">Auto</button><button data-t="light">Light</button><button data-t="dark">Dark</button></div></label><hr>
     <button class="btn" id="s-pair">📱 Use Cramly on another device</button>
     <p class="muted small">Your study sets live in this account on this device. To open them somewhere else, make a code and type it there.</p><hr>
     <button class="btn danger" id="s-del">Delete my account and all my study sets</button>
     <div class="sheet-actions"><button class="btn" data-close>Close</button></div>`, () => {
     $$("#s-theme button").forEach((b) => { b.classList.toggle("on", b.dataset.t === themePref()); b.addEventListener("click", () => { setTheme(b.dataset.t); $$("#s-theme button").forEach((x) => x.classList.toggle("on", x === b)); }); });
-    wireAccountBlock();
+    wireAccountBlock(); wireAccentPicker();
     $("#s-save").addEventListener("click", async () => { await api("/api/me", { method: "PATCH", body: { name: $("#s-name").value } }); S.me.name = $("#s-name").value; toast("Saved"); closeSheet(); route(); });
     $("#s-pair").addEventListener("click", async () => { const d = await api("/api/pair", { body: {} }); sheet(`<h3>📱 Another device</h3><p class="muted">Open Cramly there, tap <b>I already use Cramly on another device</b>, and type:</p><div class="big-code">${d.code}</div><p class="muted small" style="text-align:center">Works for 10 minutes.</p><div class="sheet-actions"><button class="btn primary" data-close>Done</button></div>`); });
     $("#s-del").addEventListener("click", async () => { if (await confirmSheet({ title: "Delete everything?", text: "Your account and every study set are removed for good.", ok: "Delete it all", danger: true })) { await api("/api/me", { method: "DELETE" }); toast("Deleted"); signOut(); } });
@@ -1036,6 +1050,7 @@ $("#have-code").addEventListener("click", () => sheet(`<h3>Join with a code</h3>
 async function boot() {
   checkStatus();
   if (window.JOIN) { const code = window.JOIN; window.JOIN = ""; await handleJoinLink(code); }
+  if (window.SHARE) { const token = window.SHARE; window.SHARE = ""; setTimeout(() => handleShareLink(token), 400); }
   $("#welcome").hidden = !!key;
   if (!key) { $("#tabbar").hidden = true; return; }
   if (!location.hash) location.hash = "#/";

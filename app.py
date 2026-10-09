@@ -104,13 +104,15 @@ def trial_left(user):
 
 
 def touch(user):
-    """Count this request's time against the free minute: real time since the last request, at most 6 s per gap."""
+    """Count premium-tool time against the free minute: the real time since the last premium moment, at most 8 s per gap
+    (a fresh start counts 1 s). Free browsing never runs the clock."""
     now = time.time()
-    last = user["last_seen"] or 0
-    dt_s = 1.0 if not last else min(6.0, max(0.0, now - last))
+    last = user["trial_at"] or 0
+    gap = now - last
+    dt_s = 1.0 if (not last or gap > 8) else max(0.0, gap)
     used = (user["trial_used"] or 0) + dt_s
-    db.run(update(db.users).where(db.users.c.id == user["id"]).values(trial_used=used, last_seen=now))
-    user["trial_used"], user["last_seen"] = used, now
+    db.run(update(db.users).where(db.users.c.id == user["id"]).values(trial_used=used, trial_at=now))
+    user["trial_used"], user["trial_at"] = used, now
 
 
 LOCKED = {"error": "Your free minute is up.", "locked": True}
@@ -134,7 +136,7 @@ def kill_switch():
     return None
 
 
-def _wrap(fn, gated, plus=False):
+def _wrap(fn, gated, plus=False, metered=False):
     def wrapped(*a, **k):
         user = me()
         if not user:
@@ -143,11 +145,15 @@ def _wrap(fn, gated, plus=False):
         user["is_plus"] = is_plus(user)
         if gated and (blocked := lockout(user)):
             return blocked
-        if not user["is_premium"]:
-            touch(user)
-        if plus and not user["is_plus"] and (user["is_premium"] or trial_left(user) <= 0 or (user["trial_calls"] or 0) > TRIAL_CALLS):
-            msg = "This tool is part of Premium Plus." if user["is_premium"] else "Your free minute is up."
+        db.run(update(db.users).where(db.users.c.id == user["id"]).values(last_seen=time.time()))
+        out_of_time = trial_left(user) <= 0 or (user["trial_calls"] or 0) > TRIAL_CALLS
+        if plus and not user["is_plus"] and (user["is_premium"] or out_of_time):
+            msg = "This tool is part of Premium Plus." if user["is_premium"] else "Your free minute of premium tools is up."
             return jsonify(error=msg, locked=True, plus=True, contact=CONTACT), 402
+        if metered and not user["is_premium"]:               # a premium-only feature: free accounts get one minute of it
+            if out_of_time:
+                return jsonify(**LOCKED, contact=CONTACT), 402
+            touch(user)
         g.user = user
         return fn(user, *a, **k)
     wrapped.__name__ = fn.__name__
@@ -155,13 +161,18 @@ def _wrap(fn, gated, plus=False):
 
 
 def need_user(fn):
-    """Signed in, and either premium or still inside the free minute."""
+    """Signed in. Free for every plan: reading, reviewing and the tools that need no AI."""
     return _wrap(fn, True)
+
+
+def need_premium(fn):
+    """Premium-only features: open to premium accounts, and to everyone for the free minute."""
+    return _wrap(fn, True, metered=True)
 
 
 def need_plus(fn):
     """Premium Plus tools: open to Plus accounts, and to everyone during the free minute."""
-    return _wrap(fn, True, plus=True)
+    return _wrap(fn, True, plus=True, metered=True)
 
 
 def need_user_open(fn):
@@ -187,7 +198,8 @@ def need_ai():
         calls = (user["trial_calls"] or 0) + 1
         db.run(update(db.users).where(db.users.c.id == user["id"]).values(trial_calls=calls))
         user["trial_calls"] = calls
-        if calls > TRIAL_CALLS or trial_left(user) <= 0:                  # the free minute is for AI; reading what you made stays free
+        touch(user)                                                       # the free minute is for AI tools; reading what you made stays free
+        if calls > TRIAL_CALLS or trial_left(user) <= 0:
             return jsonify(**LOCKED, contact=CONTACT), 402
     return None
 
@@ -293,6 +305,7 @@ def access_view(user):
     prem = user["is_premium"]
     left = trial_left(user)
     locked = (not prem) and (left <= 0 or (user["trial_calls"] or 0) > TRIAL_CALLS)
+    last_req = db.one(select(db.plan_requests).where(db.plan_requests.c.user_id == user["id"]).order_by(db.plan_requests.c.id.desc()))
     inbox = db.many(select(db.messages).where(db.messages.c.user_id == user["id"], db.messages.c.seen == 0).order_by(db.messages.c.id))
     return {"plan": plan_of({**user, "is_premium": prem, "is_plus": bool(user.get("is_plus"))}), "plus": bool(user.get("is_plus")), "limits": limits_for({**user, "is_premium": prem, "is_plus": bool(user.get("is_plus"))}),
             "premium": prem, "premium_until": user["premium_until"] if prem else 0, "trial_left": 0 if prem else int(left),
@@ -300,6 +313,7 @@ def access_view(user):
             "banned": bool(user["banned"]), "ban_reason": user["ban_reason"] or "",
             "timeout_until": user["timeout_until"] if (user["timeout_until"] or 0) > time.time() else 0,
             "maintenance": db.setting("maintenance") == "1", "maintenance_msg": db.setting("maintenance_msg"),
+            "request": {"id": last_req["id"], "status": last_req["status"], "plan": last_req["plan"], "price": last_req["price"]} if last_req else None,
             "inbox": [{"id": m["id"], "body": m["body"], "created": m["created"]} for m in inbox]}
 
 
@@ -326,7 +340,9 @@ def messages_read(user):
 @app.post("/api/beat")
 @need_user_open
 def beat(user):
-    """The page pings this every few seconds while it's visible: that's what the free minute counts."""
+    """The page pings this every few seconds. While a free account is inside a premium tool ({"tool": true}) the free minute runs."""
+    if not user["is_premium"] and (request.get_json(silent=True) or {}).get("tool") and trial_left(user) > 0:
+        touch(user)
     return jsonify(**access_view(user))
 
 

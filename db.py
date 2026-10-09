@@ -30,6 +30,7 @@ users = Table("users", meta,
     Column("trial_used", Float, default=0),                        # seconds of the free minute already used
     Column("trial_calls", Integer, default=0),                     # AI jobs run during the free minute
     Column("last_seen", Float, default=0),
+    Column("trial_at", Float, default=0),                          # when premium tools were last used (the free minute only runs then)
     Column("banned", Integer, default=0),                          # owner switch: 1 = locked out
     Column("ban_reason", Text, default=""),
     Column("timeout_until", Float, default=0),                     # owner switch: locked out until this time
@@ -54,6 +55,18 @@ messages = Table("messages", meta,                                   # notes fro
     Column("body", Text),
     Column("created", Float),
     Column("seen", Integer, default=0),
+)
+
+plan_requests = Table("plan_requests", meta,                         # "can I have premium?" messages sent from inside the app
+    Column("id", Integer, primary_key=True),
+    Column("user_id", Integer, index=True),
+    Column("plan", String(10), default="premium"),                 # premium | plus
+    Column("message", Text, default=""),
+    Column("status", String(12), default="pending"),               # pending | free | pay | paid | declined
+    Column("created", Float),
+    Column("decided", Float, default=0),
+    Column("price", String(40), default=""),                       # what the owner asked for, when they chose "pay"
+    Column("note", Text, default=""),                              # the owner's reply (payment instructions, a kind word...)
 )
 
 settings = Table("settings", meta,                                   # owner switches, like the kill switch
@@ -138,7 +151,7 @@ def _migrate():
         "topics": [("swipes", "TEXT DEFAULT ''"), ("podcast", "TEXT DEFAULT ''"), ("boost", "TEXT DEFAULT ''"), ("lab", "TEXT DEFAULT ''"), ("mynotes", "TEXT DEFAULT ''")],
         "sets": [("cheat", "TEXT DEFAULT ''"), ("glossary", "TEXT DEFAULT ''"), ("mixups", "TEXT DEFAULT ''"), ("predictor", "TEXT DEFAULT ''"), ("share_token", "VARCHAR(40) DEFAULT ''")],
         "users": [("premium", "INTEGER DEFAULT 0"), ("premium_until", "FLOAT DEFAULT 0"), ("invite_id", "INTEGER DEFAULT 0"),
-                  ("trial_used", "FLOAT DEFAULT 0"), ("trial_calls", "INTEGER DEFAULT 0"), ("last_seen", "FLOAT DEFAULT 0"),
+                  ("trial_used", "FLOAT DEFAULT 0"), ("trial_calls", "INTEGER DEFAULT 0"), ("last_seen", "FLOAT DEFAULT 0"), ("trial_at", "FLOAT DEFAULT 0"),
                   ("banned", "INTEGER DEFAULT 0"), ("ban_reason", "TEXT DEFAULT ''"), ("timeout_until", "FLOAT DEFAULT 0"),
                   ("plus", "INTEGER DEFAULT 0")],
         "invites": [("message", "TEXT DEFAULT ''"), ("plus", "INTEGER DEFAULT 0")],

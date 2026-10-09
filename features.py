@@ -74,6 +74,7 @@ def register(core):
         prem = [u for u in users if premium(u)]
         free = [u for u in users if not premium(u)]
         return jsonify(
+            pending_requests=len(db.many(select(db.plan_requests.c.id).where(db.plan_requests.c.status == "pending"))),
             accounts=len(users), premium=len(prem), plus=sum(1 for u in prem if u["plus"] or (invites.get(u["invite_id"]) or {}).get("plus")), free=len(free), locked=sum(1 for u in free if (u["trial_used"] or 0) >= core.TRIAL_SECONDS),
             new_today=sum(1 for u in users if now - (u["created"] or 0) < 86400),
             active_today=sum(1 for u in users if now - (u["last_seen"] or 0) < 86400),
@@ -263,3 +264,5 @@ def register(core):
     studytools.register(core)
     import labs                                                          # the Premium Plus tools too
     labs.register(core)
+    import asks                                                          # "can I have premium?" messages from inside the app
+    asks.register(core, admin_only, note, who)
