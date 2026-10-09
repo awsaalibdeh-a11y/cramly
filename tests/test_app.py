@@ -583,6 +583,42 @@ class BigUploads(Base):
         self.assertEqual(after - before, set())
 
 
+class Compression(Base):
+    """Squeezing text before the AI reads it, and accepting gzip uploads."""
+
+    def test_squeeze_drops_headers_page_numbers_and_repeats_but_keeps_ideas(self):
+        nl = chr(10)
+        rows = ["ACME Corp confidential"]
+        for i in range(1, 12):
+            rows += [f"Page {i}", "ACME Corp confidential", f"Unique idea number {i} about cells and energy flow."]
+        out = ingest.squeeze(nl.join(rows))
+        self.assertEqual((out.count("ACME"), out.count("Page")), (1, 0))
+        self.assertEqual(out.count("Unique idea"), 11)
+
+    def test_gzip_upload_is_unpacked_and_read(self):
+        import gzip
+        text = ("Photosynthesis turns light into sugar. " * 30).encode()
+        kind, got = ingest.read_file("notes.txt.gz", gzip.compress(text))
+        self.assertEqual(kind, "text")
+        self.assertIn("Photosynthesis turns light", got)
+
+    def test_gzip_bomb_is_refused_and_bad_gzip_is_friendly(self):
+        import gzip
+        with mock.patch.object(ingest, "MAX_GUNZIP", 1000):
+            with self.assertRaises(ingest.ai.AIError) as e:
+                ingest.read_file("big.txt.gz", gzip.compress(b"a" * 5000))
+        self.assertIn("unpacks to more", str(e.exception))
+        with self.assertRaises(ingest.ai.AIError):
+            ingest.read_file("broken.txt.gz", b"not gzip at all")
+
+    def test_gz_upload_through_the_api_builds_a_set(self):
+        import gzip
+        body = gzip.compress(("Cells are the basic unit of life. " * 40).encode())
+        with mock.patch.object(ai, "make_plan", return_value=PLAN), mock.patch.object(ai, "make_notes", return_value="n"):
+            r = self.c.post("/api/sets", headers=self.h, data={"files": (io.BytesIO(body), "notes.txt.gz")}).get_data(as_text=True)
+        self.assertIn('"type": "set"', r)
+
+
 class Reading(unittest.TestCase):
     def test_text_and_unknown_files(self):
         kind, text = ingest.read_file("notes.txt", ("Photosynthesis uses light. " * 5).encode())

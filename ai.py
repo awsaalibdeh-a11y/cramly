@@ -136,13 +136,13 @@ def make_plan(text, hint="", on_status=None):
     say = on_status or (lambda s: None)
     source = text
     if len(text) > 45000:
-        parts = _chunks(text)
+        parts = _chunks(text, max(12000, -(-len(text) // 24)))          # long documents: at most about 24 bigger sections, outlined side by side
         say(f"Reading {len(parts)} sections…")
         def outline(part):
-            return ask_json("Outline this section of study material in about 200 words: every topic, term and fact worth learning. " + LANG,
+            return ask_json("Outline this section of study material in about 250 words: every topic, term and fact worth learning. " + LANG,
                             part, OUTLINE_SCHEMA, "outline", model=FAST, effort="minimal")["outline"]
-        with ThreadPoolExecutor(max_workers=6) as pool:
-            source = "\n\n".join(f"[Section {i + 1}]\n{o}" for i, o in enumerate(pool.map(outline, parts[:40])))
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            source = "\n\n".join(f"[Section {i + 1}]\n{o}" for i, o in enumerate(pool.map(outline, parts[:30])))
     say("Planning your topics…")
     plan = ask_json(PLAN_SYSTEM, (f"Student's hint about it: {hint}\n\n" if hint else "") + source[:60000], PLAN_SCHEMA, "plan", effort="low")
     plan["topics"] = [t for t in plan["topics"] if t["title"].strip()][:16]

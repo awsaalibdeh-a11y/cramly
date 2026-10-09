@@ -519,14 +519,16 @@ async function homeView() {
 
 /* ============================================================ making a set */
 async function submitMaterials({ files = [], text = "", title = "", setId = 0, name = "" }) {
-  const form = new FormData();
-  files.forEach((f) => form.append("files", f));
-  if (text) form.append("text", text);
-  if (title) form.append("title", title);
-  if (name) form.append("name", name);
-  busy(true, setId ? "Adding to your set" : "Building your study set", "Reading your material…");
+  busy(true, setId ? "Adding to your set" : "Building your study set", files.length ? "Squeezing your files first…" : "Reading your material…");
   let newId = null, added = null, err = "";
   try {
+    const packed = await compressFiles(files, busyLine);
+    if (packed.before > 1048576) busyLine(`Uploading ${(packed.after / 1048576).toFixed(1)} MB (was ${(packed.before / 1048576).toFixed(1)} MB)…`);
+    const form = new FormData();
+    packed.files.forEach((f) => form.append("files", f));
+    if (text) form.append("text", text);
+    if (title) form.append("title", title);
+    if (name) form.append("name", name);
     await stream(setId ? `/api/sets/${setId}/materials` : "/api/sets", { form }, (ev) => {
       if (ev.type === "status") busyLine(ev.text);
       else if (ev.type === "set") newId = ev.id;

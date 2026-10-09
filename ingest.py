@@ -1,7 +1,10 @@
 """Turning an uploaded file into plain text: PDF, Word, PowerPoint, text, and photos of notes."""
 
+import gzip
 import os
 import re
+import tempfile
+from collections import Counter
 
 import ai
 
@@ -23,6 +26,47 @@ MAX_IMAGE = 20 * 1024 * 1024                        # the vision model's own lim
 MAX_SCAN = 12 * 1024 * 1024                         # scanned PDFs are read by the AI, so only smallish ones
 MAX_XML = 150 * 1024 * 1024                         # text inside a Word/PowerPoint file (guards against zip bombs)
 PDF_SECONDS = 70
+
+
+PAGE_NO = re.compile(r"(page\s*)?\d{1,4}(\s*(/|of)\s*\d{1,4})?", re.I)
+MAX_GUNZIP = 400 * 1024 * 1024
+
+
+def squeeze(text):
+    """Takes out what carries no meaning before the AI reads it: running headers and footers, page numbers, repeated lines."""
+    lines = text.split("\n")
+    counts = Counter(l.strip() for l in lines if len(l.strip()) >= 8)
+    noisy = {l for l, n in counts.items() if n >= 6}
+    seen, out = set(), []
+    for raw in lines:
+        line = raw.strip()
+        if PAGE_NO.fullmatch(line):
+            continue
+        if line in noisy or len(line) >= 40:
+            if line in seen:
+                continue
+            seen.add(line)
+        out.append(raw)
+    return "\n".join(out)
+
+
+def _gunzip(path, name):
+    fd, out = tempfile.mkstemp(prefix="cramly_up_")
+    try:
+        with gzip.open(path, "rb") as src, os.fdopen(fd, "wb") as dst:
+            total = 0
+            while chunk := src.read(1024 * 1024):
+                total += len(chunk)
+                if total > MAX_GUNZIP:
+                    raise ai.AIError(f"{name} unpacks to more than 400 MB. Try a smaller file.")
+                dst.write(chunk)
+    except ai.AIError:
+        os.remove(out)
+        raise
+    except (OSError, EOFError):
+        os.remove(out)
+        raise ai.AIError(f"I couldn't open {name}. Is it a normal, unlocked file?")
+    return out
 
 
 def _pdf(path, name):
@@ -83,6 +127,12 @@ def read_path(name, path):
     """Returns (kind, text) from a file on disk. Raises ai.AIError with a friendly message when it can't."""
     ext = os.path.splitext(name.lower())[1]
     size = os.path.getsize(path)
+    if ext == ".gz":                                       # the page compresses text before uploading: unpack it, then read as usual
+        inner = _gunzip(path, name)
+        try:
+            return read_path(name[:-3] or "file.txt", inner)
+        finally:
+            os.remove(inner)
     if size > MAX_FILE:
         raise ai.AIError(f"{name} is bigger than 1 GB. Try a smaller file.")
     try:
@@ -109,6 +159,8 @@ def read_path(name, path):
     except Exception:
         raise ai.AIError(f"I couldn't open {name}. Is it a normal, unlocked file?")
     text = clean(text)
+    if kind != "image":
+        text = clean(squeeze(text))
     if len(text) < 40:
         raise ai.AIError(f"I couldn't find any text in {name}.")
     return kind, text[:MAX_TEXT]
