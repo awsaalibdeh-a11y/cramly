@@ -19,7 +19,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from dotenv import load_dotenv
-from flask import Flask, Response, g, jsonify, render_template, request, stream_with_context
+from flask import Flask, Response, abort, g, jsonify, render_template, request, stream_with_context
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 logging.basicConfig(level=logging.INFO)
@@ -76,6 +76,29 @@ def is_premium(user):
     return True
 
 
+def is_plus(user):
+    """Premium Plus = premium, and either granted directly or through a Plus link."""
+    if not is_premium(user):
+        return False
+    if user["plus"]:
+        return True
+    if user["invite_id"]:
+        inv = db.one(select(db.invites).where(db.invites.c.id == user["invite_id"]))
+        return bool(inv and inv["plus"])
+    return False
+
+
+PLAN_LIMITS = {"free": {"sets": 3, "file_mb": 25}, "premium": {"sets": 30, "file_mb": 200}, "plus": {"sets": 100, "file_mb": 1024}}
+
+
+def plan_of(user):
+    return "plus" if user.get("is_plus") else "premium" if user.get("is_premium") else "free"
+
+
+def limits_for(user):
+    return PLAN_LIMITS[plan_of(user)]
+
+
 def trial_left(user):
     return max(0, TRIAL_SECONDS - (user["trial_used"] or 0))
 
@@ -111,18 +134,20 @@ def kill_switch():
     return None
 
 
-def _wrap(fn, gated):
+def _wrap(fn, gated, plus=False):
     def wrapped(*a, **k):
         user = me()
         if not user:
             return jsonify(error="Not signed in."), 401
         user["is_premium"] = is_premium(user)
+        user["is_plus"] = is_plus(user)
         if gated and (blocked := lockout(user)):
             return blocked
         if not user["is_premium"]:
             touch(user)
-            if gated and (trial_left(user) <= 0 or (user["trial_calls"] or 0) > TRIAL_CALLS):
-                return jsonify(**LOCKED, contact=CONTACT), 402
+        if plus and not user["is_plus"] and (user["is_premium"] or trial_left(user) <= 0 or (user["trial_calls"] or 0) > TRIAL_CALLS):
+            msg = "This tool is part of Premium Plus." if user["is_premium"] else "Your free minute is up."
+            return jsonify(error=msg, locked=True, plus=True, contact=CONTACT), 402
         g.user = user
         return fn(user, *a, **k)
     wrapped.__name__ = fn.__name__
@@ -132,6 +157,11 @@ def _wrap(fn, gated):
 def need_user(fn):
     """Signed in, and either premium or still inside the free minute."""
     return _wrap(fn, True)
+
+
+def need_plus(fn):
+    """Premium Plus tools: open to Plus accounts, and to everyone during the free minute."""
+    return _wrap(fn, True, plus=True)
 
 
 def need_user_open(fn):
@@ -157,7 +187,7 @@ def need_ai():
         calls = (user["trial_calls"] or 0) + 1
         db.run(update(db.users).where(db.users.c.id == user["id"]).values(trial_calls=calls))
         user["trial_calls"] = calls
-        if calls > TRIAL_CALLS:
+        if calls > TRIAL_CALLS or trial_left(user) <= 0:                  # the free minute is for AI; reading what you made stays free
             return jsonify(**LOCKED, contact=CONTACT), 402
     return None
 
@@ -264,7 +294,8 @@ def access_view(user):
     left = trial_left(user)
     locked = (not prem) and (left <= 0 or (user["trial_calls"] or 0) > TRIAL_CALLS)
     inbox = db.many(select(db.messages).where(db.messages.c.user_id == user["id"], db.messages.c.seen == 0).order_by(db.messages.c.id))
-    return {"premium": prem, "premium_until": user["premium_until"] if prem else 0, "trial_left": 0 if prem else int(left),
+    return {"plan": plan_of({**user, "is_premium": prem, "is_plus": bool(user.get("is_plus"))}), "plus": bool(user.get("is_plus")), "limits": limits_for({**user, "is_premium": prem, "is_plus": bool(user.get("is_plus"))}),
+            "premium": prem, "premium_until": user["premium_until"] if prem else 0, "trial_left": 0 if prem else int(left),
             "trial_total": TRIAL_SECONDS, "locked": locked, "contact": CONTACT,
             "banned": bool(user["banned"]), "ban_reason": user["ban_reason"] or "",
             "timeout_until": user["timeout_until"] if (user["timeout_until"] or 0) > time.time() else 0,
@@ -320,9 +351,9 @@ def join():
     else:
         uid = user["id"]
     until = time.time() + inv["days"] * 86400 if inv["days"] else 0
-    db.run(update(db.users).where(db.users.c.id == uid).values(premium=1, premium_until=until, invite_id=inv["id"]))
+    db.run(update(db.users).where(db.users.c.id == uid).values(premium=1, premium_until=until, invite_id=inv["id"], plus=1 if inv["plus"] else 0))
     db.run(update(db.invites).where(db.invites.c.id == inv["id"]).values(uses=inv["uses"] + 1))
-    return jsonify(ok=True, premium=True, key=new_key, message=inv["message"] or "", for_name=inv["label"] or "")
+    return jsonify(ok=True, premium=True, plus=bool(inv["plus"]), key=new_key, message=inv["message"] or "", for_name=inv["label"] or "")
 
 
 @app.patch("/api/me")
@@ -563,6 +594,13 @@ def too_big(_):
 
 def _upload_inputs():
     files = [(f.filename or "file", _spool(f)) for f in request.files.getlist("files")[:8]]
+    cap = limits_for(g.user)["file_mb"]
+    for name, path in files:
+        if os.path.getsize(path) > cap * 1024 * 1024:
+            for _, p in files:
+                _drop(p)
+            more = " Premium Plus takes up to 1 GB." if g.user["is_premium"] else " Premium takes bigger files: message for an invite."
+            abort(app.make_response((jsonify(error=f"{name} is bigger than {cap} MB, the limit on your plan.{more}", plan_limit=True), 413)))
     pasted = ingest.clean(request.form.get("text") or "")[:ingest.MAX_TEXT]
     label = (request.form.get("name") or "Pasted notes")[:80]
     return files, pasted, label
@@ -575,8 +613,9 @@ def create_set(user):
         return bad
     if limited("build", 12):
         return jsonify(error="That's a lot of new study sets in an hour. Try again a bit later."), 429
-    if len(db.many(select(db.sets.c.id).where(db.sets.c.user_id == user["id"]))) >= MAX_SETS:
-        return jsonify(error=f"You have {MAX_SETS} study sets already. Delete one to make room."), 400
+    cap = limits_for(user)["sets"]
+    if len(db.many(select(db.sets.c.id).where(db.sets.c.user_id == user["id"]))) >= cap:
+        return jsonify(error=f"Your plan has room for {cap} study sets and you have {cap}. Delete one to make room" + ("." if user["is_premium"] else ", or ask for premium."), plan_limit=True), 400
     files, pasted, label = _upload_inputs()
     hint = (request.form.get("title") or "")[:80].strip()
     if not files and len(pasted) < 80:

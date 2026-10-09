@@ -45,7 +45,7 @@ def register(core):
 
     def invite_view(i):
         return {"id": i["id"], "code": i["code"], "label": i["label"], "uses": i["uses"], "uses_max": i["uses_max"], "days": i["days"],
-                "revoked": bool(i["revoked"]), "created": i["created"], "link": link_for(i["code"]), "message": i["message"] or ""}
+                "revoked": bool(i["revoked"]), "created": i["created"], "link": link_for(i["code"]), "message": i["message"] or "", "plan": "plus" if i["plus"] else "premium"}
 
     @app.get("/api/admin/overview")
     @admin_only
@@ -60,7 +60,7 @@ def register(core):
         prem = [u for u in users if premium(u)]
         free = [u for u in users if not premium(u)]
         return jsonify(
-            accounts=len(users), premium=len(prem), free=len(free), locked=sum(1 for u in free if (u["trial_used"] or 0) >= core.TRIAL_SECONDS),
+            accounts=len(users), premium=len(prem), plus=sum(1 for u in prem if u["plus"] or (invites.get(u["invite_id"]) or {}).get("plus")), free=len(free), locked=sum(1 for u in free if (u["trial_used"] or 0) >= core.TRIAL_SECONDS),
             new_today=sum(1 for u in users if now - (u["created"] or 0) < 86400),
             active_today=sum(1 for u in users if now - (u["last_seen"] or 0) < 86400),
             trial_seconds=core.TRIAL_SECONDS, maintenance=db.setting("maintenance") == "1", banned=sum(1 for u in users if u["banned"]),
@@ -78,7 +78,7 @@ def register(core):
             return jsonify(error="Uses and days should be numbers."), 400
         code = secrets.token_urlsafe(9)
         note = str(b.get("message") or "").strip()[:1200]
-        iid = db.run(insert(db.invites).values(code=code, label=label, uses_max=uses, uses=0, days=days, revoked=0, created=time.time(), message=note))
+        iid = db.run(insert(db.invites).values(code=code, label=label, uses_max=uses, uses=0, days=days, revoked=0, created=time.time(), message=note, plus=1 if b.get("plan") == "plus" else 0))
         return jsonify(invite=invite_view(db.one(select(db.invites).where(db.invites.c.id == iid))))
 
     @app.post("/api/admin/invites/<int:iid>/revoke")
@@ -100,7 +100,7 @@ def register(core):
         now = time.time()
         inv = invites.get(u["invite_id"])
         prem = bool(u["premium"]) and (not u["premium_until"] or u["premium_until"] > now) and (not u["invite_id"] or bool(inv and not inv["revoked"]))
-        return {"id": u["id"], "name": u["name"] or "", "created": u["created"], "last_seen": u["last_seen"] or 0, "premium": prem,
+        return {"id": u["id"], "name": u["name"] or "", "created": u["created"], "last_seen": u["last_seen"] or 0, "premium": prem, "plan": ("plus" if (u["plus"] or (inv and inv["plus"])) else "premium") if prem else "free",
                 "premium_until": u["premium_until"] or 0, "invite": inv["label"] if inv else "", "trial_used": int(u["trial_used"] or 0),
                 "trial_calls": u["trial_calls"] or 0, "banned": bool(u["banned"]), "ban_reason": u["ban_reason"] or "",
                 "timeout_until": u["timeout_until"] if (u["timeout_until"] or 0) > now else 0, "sets": set_counts.get(u["id"], 0)}
@@ -178,9 +178,9 @@ def register(core):
                 days = max(0, min(3650, int(b.get("days") or 0)))
             except (TypeError, ValueError):
                 return jsonify(error="Days should be a number."), 400
-            db.run(update(db.users).where(db.users.c.id == uid).values(premium=1, invite_id=0, premium_until=time.time() + days * 86400 if days else 0))
+            db.run(update(db.users).where(db.users.c.id == uid).values(premium=1, invite_id=0, plus=1 if b.get("plan") == "plus" else 0, premium_until=time.time() + days * 86400 if days else 0))
         else:
-            db.run(update(db.users).where(db.users.c.id == uid).values(premium=0, premium_until=0))
+            db.run(update(db.users).where(db.users.c.id == uid).values(premium=0, plus=0, premium_until=0))
         return jsonify(ok=True)
 
     @app.post("/api/admin/users/<int:uid>/reset-trial")
@@ -228,3 +228,5 @@ def register(core):
 
     import studytools                                                    # the study tools register themselves the same way
     studytools.register(core)
+    import labs                                                          # the Premium Plus tools too
+    labs.register(core)

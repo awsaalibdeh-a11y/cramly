@@ -392,7 +392,7 @@ class Access(Base):
         self.assertGreater(d["trial_left"], 55)
         self.assertEqual(self.c.get("/api/sets", headers=self.h).status_code, 200)
         self.set_user(trial_used=59.9, last_seen=server.time.time() - 3)
-        r = self.c.get("/api/sets", headers=self.h)
+        r = self.c.post("/api/sets", headers=self.h, data={"text": TEXT})
         self.assertEqual(r.status_code, 402)
         self.assertEqual((r.get_json()["locked"], r.get_json()["contact"]), (True, "Awsaa.libdeh@gmail.com"))
         me = self.c.get("/api/me", headers=self.h).get_json()                      # the page can still ask what's wrong
@@ -405,11 +405,11 @@ class Access(Base):
         with mock.patch.object(ai, "make_plan", fake_plan):
             r = self.c.post("/api/sets", headers=self.h, data={"text": TEXT})
         self.assertEqual(r.status_code, 402)                                       # the 9th AI job is refused
-        self.assertEqual(self.c.get("/api/sets", headers=self.h).status_code, 402)
+        self.assertEqual(self.c.post("/api/sets", headers=self.h, data={"text": TEXT}).status_code, 402)
 
     def test_a_premium_link_unlocks_and_revoking_it_locks_again(self):
         self.set_user(trial_used=500)
-        self.assertEqual(self.c.get("/api/sets", headers=self.h).status_code, 402)
+        self.assertEqual(self.c.post("/api/sets", headers=self.h, data={"text": TEXT}).status_code, 402)
         code, iid = self.make_link()
         r = self.c.post("/api/join", headers=self.h, json={"code": code})
         self.assertEqual((r.status_code, r.get_json()["premium"]), (200, True))
@@ -417,7 +417,7 @@ class Access(Base):
         self.assertEqual((me["premium"], me["locked"]), (True, False))
         self.assertEqual(self.c.get("/api/sets", headers=self.h).status_code, 200)
         self.admin("post", f"/api/admin/invites/{iid}/revoke", json={"revoked": True})
-        self.assertEqual(self.c.get("/api/sets", headers=self.h).status_code, 402)  # switching the link off takes it back
+        self.assertEqual(self.c.post("/api/sets", headers=self.h, data={"text": TEXT}).status_code, 402)  # switching the link off takes it back
         self.admin("post", f"/api/admin/invites/{iid}/revoke", json={"revoked": False})
         self.assertEqual(self.c.get("/api/sets", headers=self.h).status_code, 200)
 
@@ -439,7 +439,7 @@ class Access(Base):
         self.c.post("/api/join", headers=self.h, json={"code": code})
         self.assertAlmostEqual(self.c.get("/api/me", headers=self.h).get_json()["premium_until"], server.time.time() + 30 * 86400, delta=60)
         self.set_user(premium_until=server.time.time() - 10, trial_used=500)
-        self.assertEqual(self.c.get("/api/sets", headers=self.h).status_code, 402)
+        self.assertEqual(self.c.post("/api/sets", headers=self.h, data={"text": TEXT}).status_code, 402)
 
     def test_admin_needs_the_secret_key(self):
         self.assertEqual(self.c.get("/api/admin/overview").status_code, 403)                  # no key configured: off
@@ -617,6 +617,111 @@ class Compression(Base):
         with mock.patch.object(ai, "make_plan", return_value=PLAN), mock.patch.object(ai, "make_notes", return_value="n"):
             r = self.c.post("/api/sets", headers=self.h, data={"files": (io.BytesIO(body), "notes.txt.gz")}).get_data(as_text=True)
         self.assertIn('"type": "set"', r)
+
+
+class Tiers(Base):
+    """Free, Premium and Premium Plus, and the Plus tools."""
+    uid, admin, make_link, set_user = Access.uid, Access.admin, Access.make_link, Access.set_user
+
+    def plan(self):
+        return self.c.get("/api/me", headers=self.h).get_json()
+
+    def join(self, **link):
+        code, _ = self.make_link(**link)
+        self.c.post("/api/join", headers=self.h, json={"code": code})
+
+    def test_plans_and_limits(self):
+        d = self.plan()
+        self.assertEqual((d["plan"], d["limits"]["sets"], d["limits"]["file_mb"]), ("free", 3, 25))
+        self.join()
+        d = self.plan()
+        self.assertEqual((d["plan"], d["limits"]["sets"], d["limits"]["file_mb"]), ("premium", 30, 200))
+        self.join(plan="plus")
+        d = self.plan()
+        self.assertEqual((d["plan"], d["plus"], d["limits"]["sets"], d["limits"]["file_mb"]), ("plus", True, 100, 1024))
+
+    def test_plus_tools_free_minute_then_plus_only(self):
+        sid = self.make_set()
+        tid = self.topics(sid)[0]["id"]
+        with mock.patch.object(ai, "make_mixups", return_value=[{"a": "mitosis", "b": "meiosis", "difference": "d", "tip": "t"}]):
+            self.assertEqual(self.c.get(f"/api/sets/{sid}/mixups", headers=self.h).status_code, 200)        # inside the free minute
+            self.set_user(trial_used=59.9, last_seen=server.time.time() - 3)
+            r = self.c.get(f"/api/sets/{sid}/mixups?fresh=1", headers=self.h)
+            self.assertEqual((r.status_code, r.get_json()["plus"]), (402, True))                            # minute is over
+            self.join()                                                                                      # premium, not plus
+            r = self.c.get(f"/api/sets/{sid}/mixups", headers=self.h)
+            self.assertEqual((r.status_code, r.get_json()["error"]), (402, "This tool is part of Premium Plus."))
+            self.join(plan="plus")
+            self.assertEqual(self.c.get(f"/api/sets/{sid}/mixups", headers=self.h).status_code, 200)
+        self.assertEqual(tid > 0, True)
+
+    def test_free_keeps_reading_and_the_non_ai_tools_after_the_minute(self):
+        sid = self.make_set()
+        tid = self.topics(sid)[0]["id"]
+        self.set_user(trial_used=60, last_seen=server.time.time() - 3)
+        for path in ("/api/sets", f"/api/sets/{sid}", f"/api/sets/{sid}/mindmap", "/api/stats"):
+            self.assertEqual(self.c.get(path, headers=self.h).status_code, 200, path)
+        self.assertEqual(self.c.put(f"/api/topics/{tid}/mynotes", headers=self.h, json={"text": "my own words"}).status_code, 200)
+        self.assertEqual(self.c.get(f"/api/topics/{tid}/mynotes", headers=self.h).get_json()["text"], "my own words")
+
+    def test_glossary_is_cached_for_premium(self):
+        sid = self.make_set()
+        self.join()
+        terms = [{"term": "Cell", "definition": "Basic unit of life."}]
+        with mock.patch.object(ai, "make_glossary", return_value=terms) as made:
+            for _ in range(2):
+                d = self.c.get(f"/api/sets/{sid}/glossary", headers=self.h).get_json()
+        self.assertEqual((d["terms"], made.call_count), (terms, 1))
+
+    def test_grader_and_prompt(self):
+        sid = self.make_set()
+        tid = self.topics(sid)[0]["id"]
+        self.join(plan="plus")
+        self.assertEqual(self.c.post(f"/api/topics/{tid}/grade", headers=self.h, json={"prompt": "Q?", "answer": "short"}).status_code, 400)
+        graded = {"score": 72, "verdict": "Good start", "strengths": ["a"], "fixes": ["b"], "improved": "better"}
+        with mock.patch.object(ai, "grade_answer", return_value=graded), mock.patch.object(ai, "make_prompt", return_value="Explain the cell."):
+            self.assertEqual(self.c.post(f"/api/topics/{tid}/prompt", headers=self.h).get_json()["prompt"], "Explain the cell.")
+            r = self.c.post(f"/api/topics/{tid}/grade", headers=self.h, json={"prompt": "Explain the cell.", "answer": "A cell is the basic unit of life and has parts."})
+        self.assertEqual(r.get_json()["score"], 72)
+
+    def test_practice_lab_and_boost(self):
+        sid = self.make_set()
+        tid = self.topics(sid)[0]["id"]
+        self.join(plan="plus")
+        lab = {"cloze": [{"text": "The ____ makes ATP.", "answer": "mitochondrion", "hint": "powerhouse"}], "tf": [{"statement": "x", "answer": True, "why": "y"}]}
+        boost = {"analogies": ["a"], "mnemonics": ["m"], "example": "e", "common_mistake": "c"}
+        with mock.patch.object(ai, "make_lab", return_value=lab), mock.patch.object(ai, "make_boost", return_value=boost):
+            self.assertEqual(self.c.get(f"/api/topics/{tid}/lab", headers=self.h).get_json()["lab"], lab)
+            self.assertEqual(self.c.get(f"/api/topics/{tid}/boost", headers=self.h).get_json()["boost"], boost)
+
+    def test_sharing_is_plus_only_and_import_copies_without_progress(self):
+        sid = self.make_set()
+        self.assertEqual(self.c.post(f"/api/sets/{sid}/share", headers=self.h, json={"on": True}).status_code, 200)   # free minute
+        self.join()
+        self.assertEqual(self.c.post(f"/api/sets/{sid}/share", headers=self.h, json={"on": True}).status_code, 402)   # premium is not enough
+        self.join(plan="plus")
+        token = self.c.post(f"/api/sets/{sid}/share", headers=self.h, json={"on": True}).get_json()["token"]
+        self.assertEqual(self.c.get(f"/api/shared/{token}").get_json()["title"], "Cells")
+        friend = self.c.post("/api/account", json={"name": "Friend"}).get_json()["key"]
+        fh = {"Authorization": f"Bearer {friend}"}
+        new_id = self.c.post(f"/api/shared/{token}/import", headers=fh).get_json()["id"]
+        copy = self.c.get(f"/api/sets/{new_id}", headers=fh).get_json()
+        self.assertEqual(len(copy["topics"]), 3)
+        self.assertTrue(all(t["status"] == 0 for t in copy["topics"]))
+        self.c.post(f"/api/sets/{sid}/share", headers=self.h, json={"on": False})
+        self.assertEqual(self.c.get(f"/api/shared/{token}").status_code, 404)
+
+    def test_free_set_cap_and_file_cap(self):
+        for _ in range(3):
+            self.make_set()
+        with mock.patch.object(ai, "make_plan", return_value=PLAN):
+            r = self.c.post("/api/sets", headers=self.h, data={"text": "Cells are the basic unit of life. " * 20})
+        self.assertEqual((r.status_code, r.get_json()["plan_limit"]), (400, True))
+        self.join()
+        big = io.BytesIO(b"x" * (201 * 1024 * 1024))
+        r = self.c.post("/api/sets", headers=self.h, data={"files": (big, "huge.txt")})
+        self.assertEqual((r.status_code, r.get_json()["plan_limit"]), (413, True))
+        self.assertIn("Premium Plus", r.get_json()["error"])
 
 
 class Reading(unittest.TestCase):

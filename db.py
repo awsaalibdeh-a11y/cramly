@@ -33,6 +33,7 @@ users = Table("users", meta,
     Column("banned", Integer, default=0),                          # owner switch: 1 = locked out
     Column("ban_reason", Text, default=""),
     Column("timeout_until", Float, default=0),                     # owner switch: locked out until this time
+    Column("plus", Integer, default=0),                            # 1 = Premium Plus (granted directly, or through a Plus link)
 )
 invites = Table("invites", meta,
     Column("id", Integer, primary_key=True),
@@ -44,6 +45,7 @@ invites = Table("invites", meta,
     Column("revoked", Integer, default=0),
     Column("created", Float),
     Column("message", Text, default=""),                           # a personal note shown to whoever opens the link
+    Column("plus", Integer, default=0),                            # 1 = the link gives Premium Plus
 )
 
 messages = Table("messages", meta,                                   # notes from the owner to one account (or everyone)
@@ -79,6 +81,10 @@ sets = Table("sets", meta,
     Column("created", Float),
     Column("opened", Float, default=0),
     Column("cheat", Text, default=""),                             # the one-page cheat sheet (markdown)
+    Column("glossary", Text, default=""),                          # JSON key terms and definitions
+    Column("mixups", Text, default=""),                            # JSON pairs of easily confused ideas
+    Column("predictor", Text, default=""),                         # JSON likely exam questions with model answers
+    Column("share_token", String(40), default=""),                 # set when the owner shares the set by link
 )
 materials = Table("materials", meta,
     Column("id", Integer, primary_key=True),
@@ -101,6 +107,9 @@ topics = Table("topics", meta,
     Column("quiz_best", Integer, default=-1),                      # best score in percent
     Column("swipes", Text, default=""),                            # JSON swipe-game cards (a question with two answers)
     Column("podcast", Text, default=""),                           # JSON two-host audio episode
+    Column("boost", Text, default=""),                             # JSON analogies, mnemonics and a real-world example
+    Column("lab", Text, default=""),                               # JSON fill-in-the-blank and true/false items
+    Column("mynotes", Text, default=""),                           # the student own notes on the topic
     Column("studied", Float, default=0),
 )
 cards = Table("cards", meta,
@@ -126,12 +135,13 @@ def _migrate():
     """create_all adds new tables but not new columns, so older databases get them added here (safe to run every start)."""
     from sqlalchemy import inspect, text
     wanted = {
-        "topics": [("swipes", "TEXT DEFAULT ''"), ("podcast", "TEXT DEFAULT ''")],
-        "sets": [("cheat", "TEXT DEFAULT ''")],
+        "topics": [("swipes", "TEXT DEFAULT ''"), ("podcast", "TEXT DEFAULT ''"), ("boost", "TEXT DEFAULT ''"), ("lab", "TEXT DEFAULT ''"), ("mynotes", "TEXT DEFAULT ''")],
+        "sets": [("cheat", "TEXT DEFAULT ''"), ("glossary", "TEXT DEFAULT ''"), ("mixups", "TEXT DEFAULT ''"), ("predictor", "TEXT DEFAULT ''"), ("share_token", "VARCHAR(40) DEFAULT ''")],
         "users": [("premium", "INTEGER DEFAULT 0"), ("premium_until", "FLOAT DEFAULT 0"), ("invite_id", "INTEGER DEFAULT 0"),
                   ("trial_used", "FLOAT DEFAULT 0"), ("trial_calls", "INTEGER DEFAULT 0"), ("last_seen", "FLOAT DEFAULT 0"),
-                  ("banned", "INTEGER DEFAULT 0"), ("ban_reason", "TEXT DEFAULT ''"), ("timeout_until", "FLOAT DEFAULT 0")],
-        "invites": [("message", "TEXT DEFAULT ''")],
+                  ("banned", "INTEGER DEFAULT 0"), ("ban_reason", "TEXT DEFAULT ''"), ("timeout_until", "FLOAT DEFAULT 0"),
+                  ("plus", "INTEGER DEFAULT 0")],
+        "invites": [("message", "TEXT DEFAULT ''"), ("plus", "INTEGER DEFAULT 0")],
     }
     insp = inspect(engine)
     for table, cols in wanted.items():

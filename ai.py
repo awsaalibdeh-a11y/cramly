@@ -20,8 +20,21 @@ import requests
 
 log = logging.getLogger("cramly")
 URL = "https://api.openai.com/v1/responses"
-MODEL = os.environ.get("OPENAI_MODEL", "gpt-5-mini")
+MODEL = os.environ.get("OPENAI_MODEL", "gpt-5-nano")
 FAST = os.environ.get("FAST_MODEL", "gpt-5-nano")
+PLUS_MODEL = os.environ.get("OPENAI_MODEL_PLUS", "gpt-5-mini")      # Premium Plus accounts get a step up, still cheap
+
+
+def _pick(model=None):
+    if model:
+        return model
+    try:
+        from flask import g, has_request_context
+        if has_request_context() and (getattr(g, "user", None) or {}).get("is_plus"):
+            return PLUS_MODEL
+    except Exception:
+        pass
+    return MODEL
 
 
 class AIError(RuntimeError):
@@ -59,12 +72,13 @@ def _text(resp):
     return msgs[-1]["content"][0]["text"] if msgs else ""
 
 
-def ask_json(system, user, schema, name, model=None, effort="low", extra_parts=None):
+def ask_json(system, user, schema, name, model=None, effort="minimal", extra_parts=None):
     content = [{"type": "input_text", "text": user}] + (extra_parts or [])
-    body = {"model": model or MODEL,
+    model = _pick(model)
+    body = {"model": model,
             "input": [{"role": "system", "content": system}, {"role": "user", "content": content}],
             "text": {"format": {"type": "json_schema", "name": name, "schema": schema, "strict": True}}}
-    if (model or MODEL).startswith(("gpt-5", "o")):
+    if model.startswith(("gpt-5", "o")):
         body["reasoning"] = {"effort": effort}
     return json.loads(_text(_call(body)))
 
@@ -144,7 +158,7 @@ def make_plan(text, hint="", on_status=None):
         with ThreadPoolExecutor(max_workers=12) as pool:
             source = "\n\n".join(f"[Section {i + 1}]\n{o}" for i, o in enumerate(pool.map(outline, parts[:30])))
     say("Planning your topics…")
-    plan = ask_json(PLAN_SYSTEM, (f"Student's hint about it: {hint}\n\n" if hint else "") + source[:60000], PLAN_SCHEMA, "plan", effort="low")
+    plan = ask_json(PLAN_SYSTEM, (f"Student's hint about it: {hint}\n\n" if hint else "") + source[:60000], PLAN_SCHEMA, "plan", effort="minimal")
     plan["topics"] = [t for t in plan["topics"] if t["title"].strip()][:16]
     if not plan["topics"]:
         raise AIError("I couldn't find anything to study in that. Try a file with more text.")
@@ -221,7 +235,7 @@ one clearly right answer, the wrong ones plausible but clearly wrong to someone 
 Spread the right answer over positions A-D. No "all of the above". `why` explains the answer in one sentence. {LANG}"""
     good = []
     for _ in range(2):                                               # a short or broken quiz gets one more try
-        qs = ask_json(system, _topic_prompt(topic, context), QUIZ_SCHEMA, "quiz", effort="low")["questions"]
+        qs = ask_json(system, _topic_prompt(topic, context), QUIZ_SCHEMA, "quiz", effort="minimal")["questions"]
         good = [q for q in qs if len(q["options"]) == 4 and 0 <= q["answer"] < 4 and q["q"].strip()]
         if len(good) >= min(n, 5):
             break
@@ -244,7 +258,7 @@ of those claims FALSE: subtly wrong versions of real facts).
 Put the right answer first about half the time and second the other half (`answer` is its index, 0 or 1). `why` is one short sentence.
 Cover different ideas; ask only what the material supports. {LANG}"""
     note = ("\nAlready used (don't repeat): " + " | ".join(list(avoid)[:20])) if avoid else ""
-    cards = ask_json(system, _topic_prompt(topic, context) + note, SWIPE_SCHEMA, "swipes", effort="low")["cards"]
+    cards = ask_json(system, _topic_prompt(topic, context) + note, SWIPE_SCHEMA, "swipes", effort="minimal")["cards"]
     return [c for c in cards if len(c["options"]) == 2 and c["answer"] in (0, 1) and c["q"].strip() and all(o.strip() for o in c["options"])]
 
 
@@ -261,7 +275,7 @@ def grade_explanation(topic, context, text):
 score 0-100 for accuracy and completeness (a good, simple, mostly complete explanation is 80-90; vague is 40-60). Be kind and specific.
 `got`: what they explained well. `missing`: important ideas they left out or got wrong, each stated correctly in a short phrase.
 Never penalise simple wording. Reply in the language the student wrote in."""
-    r = ask_json(system, _topic_prompt(topic, context) + f"\n\nTHE STUDENT'S EXPLANATION:\n{text}", EXPLAIN_SCHEMA, "explain", effort="low")
+    r = ask_json(system, _topic_prompt(topic, context) + f"\n\nTHE STUDENT'S EXPLANATION:\n{text}", EXPLAIN_SCHEMA, "explain", effort="minimal")
     r["score"] = max(0, min(100, r["score"]))
     return r
 
@@ -279,7 +293,7 @@ Two hosts: A (curious, asks the questions a student would ask, a little funny) a
 examples and analogies). About 450-550 words in total: 22-28 lines of 15-35 words each, spoken language (contractions, no bullet points, no markdown).
 Flow: a quick hook, then 3-4 key ideas one at a time, an everyday example, a 2-question recap where A asks and B answers, a warm
 sign-off. Say only what the material supports. `title` is a catchy episode name. {LANG}"""
-    ep = ask_json(system, _topic_prompt(topic, context), PODCAST_SCHEMA, "podcast", effort="low")
+    ep = ask_json(system, _topic_prompt(topic, context), PODCAST_SCHEMA, "podcast", effort="minimal")
     ep["lines"] = [l for l in ep["lines"] if l["text"].strip()]
     return ep
 
@@ -293,7 +307,7 @@ def make_cheatsheet(title, digest):
 bullets (key definitions, formulas, rules, dates, steps) with **bold** key terms, at most about 60 words per topic; add a final
 "## Common mistakes" with 3-5 bullets and a "## Memory tricks" with 2-3 mnemonics or one-liners. It must fit on one printed page
 (around 600-800 words in total, fewer for small sets): dense, scannable, no filler. Use only what the material says. {LANG}"""
-    return ask_json(system, f"STUDY SET: {title}\n\n{digest}", SHEET_SCHEMA, "sheet", effort="low")["sheet"].strip()
+    return ask_json(system, f"STUDY SET: {title}\n\n{digest}", SHEET_SCHEMA, "sheet", effort="minimal")["sheet"].strip()
 
 
 SOLVE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["solution", "final"], "properties": {
@@ -316,7 +330,7 @@ THE STUDENT'S MATERIAL (may help):
     if image:
         b64 = base64.b64encode(image).decode()
         parts.append({"type": "input_image", "image_url": f"data:{mime};base64,{b64}"})
-    body = {"model": MODEL, "reasoning": {"effort": "low"},
+    body = {"model": MODEL, "reasoning": {"effort": "minimal"},
             "input": [{"role": "system", "content": system}, {"role": "user", "content": parts or [{"type": "input_text", "text": "(no question)"}]}],
             "text": {"format": {"type": "json_schema", "name": "solve", "schema": SOLVE_SCHEMA, "strict": True}}}
     return json.loads(_text(_call(body, timeout=170)))
@@ -358,7 +372,7 @@ STYLES = {
 def chat(mode, context, messages, style=""):
     """Yield the tutor's reply piece by piece."""
     system = (GUIDED if mode == "guided" else ASK) + "\n" + STYLES.get(style, "") + "\nReply in the language the student writes in.\n\n" + context
-    body = {"model": MODEL, "stream": True, "reasoning": {"effort": "minimal"},
+    body = {"model": _pick(), "stream": True, "reasoning": {"effort": "minimal"},
             "input": [{"role": "system", "content": system}] + messages[-14:]}
     with requests.post(URL, headers=_headers(), json=body, stream=True, timeout=(10, 120)) as resp:
         if not resp.ok:
@@ -367,3 +381,81 @@ def chat(mode, context, messages, style=""):
         for ev in _sse(resp):
             if ev.get("type") == "response.output_text.delta":
                 yield ev.get("delta", "")
+
+
+# ---------- more study tools: glossary, exam predictor, mix-ups, boosters, practice lab, grader ----------
+def _obj(props, req=None):
+    return {"type": "object", "additionalProperties": False, "required": req or list(props), "properties": props}
+
+
+def _arr(item):
+    return {"type": "array", "items": item}
+
+
+S = {"type": "string"}
+GLOSSARY_SCHEMA = _obj({"terms": _arr(_obj({"term": S, "definition": S}))})
+PREDICTOR_SCHEMA = _obj({"questions": _arr(_obj({"q": S, "answer": S, "marks": {"type": "integer"}, "topic": S, "why_likely": S}))})
+MIXUPS_SCHEMA = _obj({"pairs": _arr(_obj({"a": S, "b": S, "difference": S, "tip": S}))})
+BOOST_SCHEMA = _obj({"analogies": _arr(S), "mnemonics": _arr(S), "example": S, "common_mistake": S})
+LAB_SCHEMA = _obj({"cloze": _arr(_obj({"text": S, "answer": S, "hint": S})),
+                   "tf": _arr(_obj({"statement": S, "answer": {"type": "boolean"}, "why": S}))})
+GRADE_SCHEMA = _obj({"score": {"type": "integer"}, "verdict": S, "strengths": _arr(S), "fixes": _arr(S), "improved": S})
+PROMPT_SCHEMA = _obj({"prompt": S})
+
+
+def make_glossary(title, digest):
+    system = f"""You build a glossary for a student's study set: the 20-30 most important terms, names and concepts, each with a
+short, clear definition (1-2 sentences) that uses only what the material says. Order them the way the material introduces them.
+No duplicates. {LANG}"""
+    terms = ask_json(system, f"STUDY SET: {title}\n\n{digest}", GLOSSARY_SCHEMA, "glossary", effort="minimal")["terms"]
+    return [t for t in terms if t["term"].strip() and t["definition"].strip()][:40]
+
+
+def make_predictor(title, digest, n=10):
+    system = f"""You are an experienced examiner. From the student's material, predict the {n} questions most likely to appear on an
+exam: a mix of define, explain, compare and apply. For each give a model answer worth full marks (2-5 sentences, using only the
+material), the marks (1-6), the topic, and one short line on why it is likely to be asked. {LANG}"""
+    qs = ask_json(system, f"STUDY SET: {title}\n\n{digest}", PREDICTOR_SCHEMA, "predictor", effort="minimal")["questions"]
+    return [q for q in qs if q["q"].strip() and q["answer"].strip()][:n + 4]
+
+
+def make_mixups(title, digest):
+    system = f"""From the student's material pick 6-10 pairs of ideas that students most often mix up (similar names, similar
+processes, opposite effects). For each pair: the two items (a, b), the key difference in one or two sentences, and a memory tip
+that keeps them apart. Only pairs the material actually supports. {LANG}"""
+    pairs = ask_json(system, f"STUDY SET: {title}\n\n{digest}", MIXUPS_SCHEMA, "mixups", effort="minimal")["pairs"]
+    return [p for p in pairs if p["a"].strip() and p["b"].strip()][:12]
+
+
+def make_boost(topic, context):
+    system = f"""You help a student remember ONE topic. Give 2 analogies from everyday life, 2 memorable mnemonics or rhymes (or
+vivid mental pictures), one concrete real-world example, and the single most common mistake students make with it. Accurate first,
+fun second. Short: each item at most 2 sentences. {LANG}"""
+    return ask_json(system, _topic_prompt(topic, context), BOOST_SCHEMA, "boost", effort="minimal")
+
+
+def make_lab(topic, context):
+    system = f"""You write quick-fire practice for ONE topic. 8 fill-in-the-blank sentences: `text` is a sentence from the material with
+the key term replaced by ____ (exactly one blank), `answer` is the missing word or short phrase, `hint` is a short clue.
+Then 8 true/false statements (about half false, the false ones plausible), each with the answer and a one-sentence explanation.
+Use only the material. {LANG}"""
+    d = ask_json(system, _topic_prompt(topic, context), LAB_SCHEMA, "lab", effort="minimal")
+    d["cloze"] = [c for c in d["cloze"] if "____" in c["text"] and c["answer"].strip()]
+    return d
+
+
+def make_prompt(topic, context):
+    system = f"""Write ONE good written-answer exam question for this topic, the kind that needs 3-6 sentences (explain, compare or
+apply; not a yes/no or one-word question). Only the question. {LANG}"""
+    return ask_json(system, _topic_prompt(topic, context), PROMPT_SCHEMA, "prompt", model=FAST, effort="minimal")["prompt"].strip()
+
+
+def grade_answer(topic, context, prompt, answer):
+    system = f"""You are a fair, encouraging examiner marking a student's written answer against THEIR study material.
+Give `score` 0-100, a one-sentence `verdict`, up to 3 `strengths` (what they got right), up to 4 `fixes` (what is missing, wrong or
+unclear, each one concrete), and `improved`: a better version of their answer in their own voice, kept about the same length,
+using only the material. Never invent facts that are not in the material. Reply in the language of the student's answer."""
+    user = f"{_topic_prompt(topic, context)}\n\nQUESTION: {prompt}\n\nSTUDENT'S ANSWER:\n{answer[:3000]}"
+    d = ask_json(system, user, GRADE_SCHEMA, "grade", effort="minimal")
+    d["score"] = max(0, min(100, int(d["score"])))
+    return d
