@@ -93,6 +93,7 @@ function afterShell() {
   $$("#tabbar [data-ic], #view [data-ic]").forEach((el) => { el.innerHTML = ic(el.dataset.ic); });
   focusTick();
   wireAccess();
+  markLocks();
 }
 
 /* ============================================================ theme */
@@ -153,6 +154,7 @@ function focusSheet() {
 
 /* ============================================================ export flashcards (CSV opens in Excel, imports into Anki) */
 async function exportCards() {
+  if (!canPremium()) return needPlans("Exporting flashcards");
   const { cards } = await api(`/api/sets/${S.cur.set.id}/cards`);
   if (!cards.length) return toast("Open the flashcards once first, then export them.", true);
   const q = (v) => `"${String(v).replace(/"/g, '""')}"`;
@@ -397,3 +399,16 @@ document.addEventListener("click", (e) => {
   if (!a) return;
   if (a.dataset.act === "aura") auraSheet(); else if (a.dataset.act === "focus") focusSheet();
 });
+
+/* a small lock on the tools your plan does not include */
+function markLocks() {
+  const plan = S.me?.plan || "free", trial = (S.me?.trial_left ?? 0) > 0;
+  const has = (need) => need === "premium" ? plan !== "free" || trial : plan === "plus" || trial;
+  $$("[data-need]").forEach((a) => {
+    const open = has(a.dataset.need);
+    a.classList.toggle("locked", !open);
+    if (!open && !a.querySelector(".lk")) a.insertAdjacentHTML("beforeend", `<span class="lk" title="${a.dataset.need === "plus" ? "Premium Plus" : "Premium"}">${ic("lock")}</span>`);
+    if (open) a.querySelector(".lk")?.remove();
+  });
+  $$("details.grp").forEach((d) => d.addEventListener("toggle", () => ls.set(`cramly.g.${d.dataset.g}`, d.open)));
+}

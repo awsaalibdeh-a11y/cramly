@@ -14,6 +14,7 @@ function accentPicker() {
 }
 function wireAccentPicker() {
   $$("#s-accent .swatch").forEach((b) => b.addEventListener("click", () => {
+    if (b.dataset.a !== "grape" && !canPremium()) return needPlans("Accent colours");
     ls.set("cramly.accent", b.dataset.a); applyAccent(b.dataset.a);
     $$("#s-accent .swatch").forEach((x) => { x.classList.toggle("on", x === b); x.setAttribute("aria-checked", x === b); });
   }));
@@ -24,14 +25,14 @@ const paletteButton = () => `<button class="chip-btn" id="pal-btn" title="Search
 function paletteItems() {
   const items = [
     ["🏠", "Home", "#/"], ["📅", "Calendar", "#/calendar"], ["🃏", "Daily review", "#/review"], ["🎙️", "Record a lecture", "#/record"],
-    ["➕", "New study set", "#/new"], ["📸", "Snap and solve", "#/solve"], ["📈", "Progress", "#/progress"], ["🎧", "Focus room", "#/focus"],
+    ["➕", "New study set", "#/new"], ["📸", "Snap and solve", "#/solve"], ["📈", "Progress", "#/progress"], ["🎧", "Focus room", "#/focus"], ["📝", "Summariser", "#/summarize"], ["🃏", "Quick cards", "#/quickcards"],
   ].map(([e, t, h]) => ({ e, t, h, k: "Go to" }));
   (S.sets || []).forEach((s) => items.push({ e: s.emoji, t: s.title, h: `#/set/${s.id}`, k: "Study set" }));
   const set = S.cur?.set;
   if (set) {
     const id = set.id;
     [["🕸️", "Mind map", "map"], ["📄", "Cheat sheet", "cheat"], ["⏱️", "Exam builder", "exam"], ["📖", "Glossary", "glossary"], ["🔮", "Exam predictor", "predictor"],
-      ["🔀", "Mix-ups", "mixups"], ["🃏", "Flashcards", "cards"], ["🕹️", "Swipe game", "swipe"], ["🎯", "Practice test", "test"], ["🧩", "Match game", "match"]]
+      ["🔀", "Mix-ups", "mixups"], ["🗓️", "Study schedule", "schedule"], ["📓", "Mistake notebook", "mistakes"], ["🖨️", "Print flashcards", "print"], ["✍️", "Essay outline", "outline"], ["📚", "Study guide", "guide"], ["🃏", "Flashcards", "cards"], ["🕹️", "Swipe game", "swipe"], ["🎯", "Practice test", "test"], ["🧩", "Match game", "match"]]
       .forEach(([e, t, h]) => items.push({ e, t: `${t}`, h: `#/set/${id}/${h}`, k: set.title }));
     (S.cur.topics || []).forEach((t) => {
       [["read", "Read"], ["cards", "Flashcards"], ["quiz", "Quiz"], ["listen", "Listen"], ["boost", "Memory boost"], ["lab", "Practice lab"], ["grade", "Write and grade"], ["notes", "My notes"]]
@@ -40,12 +41,15 @@ function paletteItems() {
   }
   items.push({ e: "🌓", t: "Switch light or dark", k: "Action", run: () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark") });
   items.push({ e: "⚙️", t: "Settings", k: "Action", run: () => settingsSheet() });
+  items.push({ e: "💌", t: "Contact Awsaa (question, problem, idea)", k: "Action", run: () => openContact("question") });
+  items.push({ e: "⭐", t: "Ask for premium", k: "Action", run: () => openContact("premium") });
   items.push({ e: "⌨️", t: "Keyboard shortcuts", k: "Action", run: () => shortcutsSheet() });
   Object.entries(ACCENTS).forEach(([k, [n]]) => items.push({ e: "🎨", t: `Accent: ${n}`, k: "Action", run: () => { ls.set("cramly.accent", k); applyAccent(k); } }));
   return items;
 }
 function openPalette() {
   if ($("#palette") || $("#paywall") || $("#gate")) return;
+  if (!canPremium()) return needPlans("Search and quick jump");
   const all = paletteItems();
   const el = document.createElement("div");
   el.id = "palette"; el.className = "palette"; el.setAttribute("role", "dialog"); el.setAttribute("aria-label", "Search");
@@ -97,6 +101,7 @@ function noiseBuffer(ctx, brown) {
   return buf;
 }
 function setAmbient(kind) {
+  if (kind !== "off" && !canPremium()) { needPlans("Focus sounds"); kind = "off"; }
   try { ambient.node?.stop(); } catch { /* not playing */ }
   ambient.kind = kind; ls.set("cramly.ambient", kind);
   if (kind === "off") return;

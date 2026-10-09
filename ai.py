@@ -459,3 +459,56 @@ using only the material. Never invent facts that are not in the material. Reply 
     d = ask_json(system, user, GRADE_SCHEMA, "grade", effort="minimal")
     d["score"] = max(0, min(100, int(d["score"])))
     return d
+
+
+# ---------- a natural voice for the tutor call (Premium Plus) ----------
+TTS_MODEL = os.environ.get("TTS_MODEL", "gpt-4o-mini-tts")
+VOICES = ("coral", "nova", "sage", "ash")
+
+
+def speech(text, voice="coral"):
+    """MP3 bytes of `text` read aloud in a warm, human voice."""
+    body = {"model": TTS_MODEL, "voice": voice if voice in VOICES else "coral", "input": str(text)[:600], "response_format": "mp3"}
+    if TTS_MODEL.startswith("gpt-4o"):
+        body["instructions"] = "Speak like a warm, encouraging tutor on a phone call: natural, relaxed pace, clear and friendly."
+    try:
+        r = requests.post("https://api.openai.com/v1/audio/speech", headers=_headers(), json=body, timeout=(10, 40))
+    except requests.RequestException:
+        raise AIError("The voice is unavailable right now.")
+    if not r.ok:
+        raise AIError("The voice is unavailable right now.")
+    return r.content
+
+
+# ---------- summariser, quick cards, essay outline, weak-card improver ----------
+SUMMARY_SCHEMA = _obj({"short": S, "bullets": _arr(S), "detailed": S, "terms": _arr(S)})
+OUTLINE_SCHEMA2 = _obj({"thesis": S, "sections": _arr(_obj({"heading": S, "points": _arr(S)})), "evidence": _arr(S), "conclusion": S})
+IMPROVE_SCHEMA = _obj({"cards": _arr(_obj({"id": {"type": "integer"}, "front": S, "back": S, "tip": S}))})
+
+
+def summarize(text):
+    system = f"""Summarise the text the student pasted. Give: `short` (one or two sentences), `bullets` (5-8 tight bullets with the
+facts that matter), `detailed` (3-4 short paragraphs a student could revise from), and `terms` (up to 8 key terms worth learning).
+Use only what the text says. {LANG}"""
+    return ask_json(system, text[:30000], SUMMARY_SCHEMA, "summary", effort="minimal")
+
+
+def quick_cards(text, n=10):
+    system = f"""Turn the pasted text into {n} flashcards: each front is a question or prompt (never yes/no), each back a short, complete
+answer (1-2 sentences). Cover the most important ideas first, no duplicates, only what the text says. {LANG}"""
+    return ask_json(system, text[:20000], CARDS_SCHEMA, "cards", effort="minimal")["cards"]
+
+
+def make_essay_outline(title, digest, question):
+    system = f"""You help a student plan a written answer. From THEIR material only, build an outline for the question: a one-sentence
+`thesis`, 3-5 `sections` (a heading and 2-4 points each, in the order a good answer would make them), the `evidence` from the material
+worth quoting or citing, and a one-sentence `conclusion`. {LANG}"""
+    return ask_json(system, f"QUESTION: {question[:400]}\n\nSTUDY SET: {title}\n\n{digest}", OUTLINE_SCHEMA2, "outline", effort="minimal")
+
+
+def improve_cards(topic, context, cards):
+    system = f"""These flashcards keep being forgotten. Rewrite each so it is easier to remember: a clearer, shorter question on the front,
+a crisp answer on the back (at most 2 sentences), and a `tip` (a memory hook, picture or mnemonic). Keep the same id and the same
+fact; do not add facts that are not in the material. {LANG}"""
+    listing = "\n".join(f"[{c['id']}] FRONT: {c['front']} | BACK: {c['back']}" for c in cards)
+    return ask_json(system, f"{_topic_prompt(topic, context)}\n\nCARDS TO IMPROVE:\n{listing}", IMPROVE_SCHEMA, "improve", effort="minimal")["cards"]

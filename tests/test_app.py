@@ -737,6 +737,18 @@ class Tiers(Base):
         self.c.post(f"/api/sets/{sid}/share", headers=self.h, json={"on": False})
         self.assertEqual(self.c.get(f"/api/shared/{token}").status_code, 404)
 
+    def test_studio_voice_is_plus_only_and_validated(self):
+        with mock.patch.object(ai, "speech", return_value=b"ID3fakemp3") as made:
+            self.assertEqual(self.c.post("/api/tts", headers=self.h, json={"text": "Hello there"}).status_code, 402)      # free
+            self.join()
+            self.assertEqual(self.c.post("/api/tts", headers=self.h, json={"text": "Hello there"}).status_code, 402)      # premium
+            self.join(plan="plus")
+            self.assertEqual(self.c.post("/api/tts", headers=self.h, json={"text": " "}).status_code, 400)
+            r = self.c.post("/api/tts", headers=self.h, json={"text": "Hello " * 300, "voice": "nova"})
+            self.assertEqual((r.status_code, r.mimetype, r.data), (200, "audio/mpeg", b"ID3fakemp3"))
+            self.assertLessEqual(len(made.call_args.args[0]), 600)
+            self.assertEqual(made.call_args.args[1], "nova")
+
     def test_free_set_cap_and_file_cap(self):
         for _ in range(2):
             self.make_set()
@@ -808,10 +820,75 @@ class PlanRequests(Base):
         self.admin("post", f"/api/admin/requests/{rid}/decide", json={"decision": "declined"})
         self.assertEqual(self.c.post("/api/request", headers=self.h, json={"message": "again"}).status_code, 429)
 
+    def test_questions_bugs_and_ideas_get_replies(self):
+        self.assertEqual(self.c.post("/api/request", headers=self.h, json={"kind": "bug", "message": "x"}).status_code, 400)
+        self.c.post("/api/request", headers=self.h, json={"kind": "bug", "message": "The match game freezes on my phone."})
+        self.c.post("/api/request", headers=self.h, json={"kind": "premium", "plan": "premium", "message": "please"})
+        rows = [r for r in self.admin("get", "/api/admin/requests").get_json()["requests"] if r["user_id"] == self.uid()]
+        self.assertEqual({r["kind"] for r in rows}, {"bug", "premium"})                       # two separate threads
+        bug = next(r for r in rows if r["kind"] == "bug")
+        self.assertEqual(self.admin("post", f"/api/admin/requests/{bug['id']}/decide", json={"decision": "reply"}).status_code, 400)
+        self.admin("post", f"/api/admin/requests/{bug['id']}/decide", json={"decision": "reply", "note": "Thanks, fixed in the next update."})
+        d = self.me()
+        self.assertTrue(any("fixed in the next update" in m["body"] for m in d["inbox"]))
+        after = {r["id"]: r["status"] for r in self.admin("get", "/api/admin/requests").get_json()["requests"]}
+        self.assertEqual(after[bug["id"]], "answered")
+
     def test_cannot_ask_for_what_you_have(self):
         code, _ = Access.make_link(self, plan="plus")
         self.c.post("/api/join", headers=self.h, json={"code": code})
         self.assertEqual(self.c.post("/api/request", headers=self.h, json={"plan": "plus"}).status_code, 400)
+
+
+class MoreTools(Base):
+    """Summariser, quick cards, outline, card improver, study guide."""
+    uid, admin, make_link, set_user = Access.uid, Access.admin, Access.make_link, Access.set_user
+
+    def join(self, **link):
+        code, _ = self.make_link(**link)
+        self.c.post("/api/join", headers=self.h, json={"code": code})
+
+    def test_summarize_needs_text_and_is_premium(self):
+        summary = {"short": "s", "bullets": ["a"], "detailed": "d", "terms": ["t"]}
+        with mock.patch.object(ai, "summarize", return_value=summary):
+            self.assertEqual(self.c.post("/api/summarize", headers=self.h, json={"text": "too short"}).status_code, 400)
+            self.assertEqual(self.c.post("/api/summarize", headers=self.h, json={"text": "Cells are the unit of life. " * 10}).get_json()["short"], "s")   # free minute
+            self.set_user(trial_used=server.TRIAL_SECONDS)
+            self.assertEqual(self.c.post("/api/summarize", headers=self.h, json={"text": "Cells are the unit of life. " * 10}).status_code, 402)
+            self.join()
+            self.assertEqual(self.c.post("/api/summarize", headers=self.h, json={"text": "Cells are the unit of life. " * 10}).status_code, 200)
+
+    def test_quick_cards_can_be_saved_into_a_topic_without_duplicates(self):
+        sid = self.make_set()
+        tid = self.topics(sid)[0]["id"]
+        cards = [{"front": "What is a cell?", "back": "The unit of life."}, {"front": "What is DNA?", "back": "Genes."}]
+        with mock.patch.object(ai, "quick_cards", return_value=cards):
+            text = "Cells are the unit of life. " * 10
+            self.assertEqual(self.c.post("/api/quickcards", headers=self.h, json={"text": text}).get_json()["saved"], 0)
+            r = self.c.post("/api/quickcards", headers=self.h, json={"text": text, "topic_id": tid, "save": True}).get_json()
+            self.assertEqual(r["saved"], 2)
+            again = self.c.post("/api/quickcards", headers=self.h, json={"text": text, "topic_id": tid, "save": True}).get_json()
+            self.assertEqual(again["saved"], 0)
+
+    def test_outline_improver_and_guide_are_plus(self):
+        sid = self.make_set()
+        tid = self.topics(sid)[0]["id"]
+        self.join()
+        self.assertEqual(self.c.get(f"/api/sets/{sid}/guide", headers=self.h).status_code, 402)
+        self.join(plan="plus")
+        outline = {"thesis": "t", "sections": [{"heading": "h", "points": ["p"]}], "evidence": ["e"], "conclusion": "c"}
+        with mock.patch.object(ai, "make_essay_outline", return_value=outline):
+            self.assertEqual(self.c.post(f"/api/sets/{sid}/outline", headers=self.h, json={"question": "hi"}).status_code, 400)
+            self.assertEqual(self.c.post(f"/api/sets/{sid}/outline", headers=self.h, json={"question": "Discuss how cells make energy."}).get_json()["thesis"], "t")
+        cid = self.c.post(f"/api/topics/{tid}/cards/add", headers=self.h, json={"front": "Q?", "back": "A."}).get_json()["card"]["id"]
+        better = [{"id": cid, "front": "Clearer Q?", "back": "Crisp A.", "tip": "Think of a factory."}]
+        with mock.patch.object(ai, "improve_cards", return_value=better):
+            out = self.c.post(f"/api/topics/{tid}/cards/improve", headers=self.h).get_json()["cards"]
+        self.assertEqual(out[0]["tip"], "Think of a factory.")
+        self.assertEqual(self.c.get(f"/api/sets/{sid}/cards", headers=self.h).get_json()["cards"][0]["front"], "Clearer Q?")
+        g = self.c.get(f"/api/sets/{sid}/guide", headers=self.h).get_json()
+        self.assertEqual(g["topics"], 3)
+        self.assertIn("## 1. Cell basics", g["guide"])
 
 
 class Reading(unittest.TestCase):

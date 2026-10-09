@@ -62,6 +62,7 @@ plan_requests = Table("plan_requests", meta,                         # "can I ha
     Column("id", Integer, primary_key=True),
     Column("user_id", Integer, index=True),
     Column("plan", String(10), default="premium"),                 # premium | plus
+    Column("kind", String(10), default="premium"),                 # premium | question | bug | idea
     Column("message", Text, default=""),
     Column("status", String(12), default="pending"),               # pending | free | pay | paid | declined
     Column("created", Float),
@@ -156,6 +157,7 @@ def _migrate():
                   ("banned", "INTEGER DEFAULT 0"), ("ban_reason", "TEXT DEFAULT ''"), ("timeout_until", "FLOAT DEFAULT 0"),
                   ("plus", "INTEGER DEFAULT 0")],
         "invites": [("message", "TEXT DEFAULT ''"), ("plus", "INTEGER DEFAULT 0")],
+        "plan_requests": [("kind", "VARCHAR(10) DEFAULT 'premium'")],
     }
     insp = inspect(engine)
     for table, cols in wanted.items():

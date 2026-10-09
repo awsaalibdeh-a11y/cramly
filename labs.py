@@ -11,10 +11,11 @@
 """
 
 import json
+import os
 import secrets
 import time
 
-from flask import jsonify, render_template, request
+from flask import Response, jsonify, render_template, request
 
 
 def register(core):
@@ -148,5 +149,26 @@ def register(core):
         db.run(update(db.topics).where(db.topics.c.id == topic_id).values(mynotes=text))
         return jsonify(ok=True)
 
+    @app.post("/api/tts")
+    @need_user
+    def tts(user):
+        """The studio voice for tutor calls: Premium Plus only, since every sentence costs a little."""
+        if not user["is_plus"]:
+            return jsonify(error="The studio voice is part of Premium Plus.", locked=True, plus=True, contact=core.CONTACT), 402
+        if not os.environ.get("OPENAI_API_KEY"):
+            return jsonify(error="The AI isn't connected yet."), 503
+        b = request.get_json(silent=True) or {}
+        text = " ".join(str(b.get("text") or "").split())[:600]
+        if len(text) < 2:
+            return jsonify(error="Nothing to say."), 400
+        if limited("tts", 400):
+            return jsonify(error="That is a lot of talking for one hour. Take a short break."), 429
+        try:
+            return Response(ai.speech(text, str(b.get("voice") or "coral")), mimetype="audio/mpeg", headers={"Cache-Control": "no-store"})
+        except Exception as exc:
+            return ai_error(exc)
+
+    import tools3                                                        # summariser, quick cards, outline, card improver, study guide
+    tools3.register(core, ai_error, digest)
     import sharing                                                       # sharing lives next door
     sharing.register(core, ai_error)

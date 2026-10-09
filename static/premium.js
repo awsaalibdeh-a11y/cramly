@@ -211,6 +211,7 @@ function accountBlock() {
     <button class="link" id="s-haslink" type="button">I have a premium link</button>`;
 }
 function wireAccountBlock() {
+  $("#s-contact")?.addEventListener("click", () => openContact("question"));
   $("#s-ask")?.addEventListener("click", () => { closeSheet(); setTimeout(() => askSheet("premium"), 150); });
   $("#s-haslink")?.addEventListener("click", async () => {
     const v = await askText({ title: "Premium link", label: "Paste it here", ok: "Unlock" });
@@ -284,9 +285,9 @@ function showInbox() {
 /* ---------- the three plans ---------- */
 const PLAN_NAMES = { free: "Free", premium: "Premium", plus: "Premium Plus" };
 const PLANS = [
-  { id: "free", icon: "🌱", name: "Free", tag: "forever", items: ["Read and review everything you made", "Flashcard reviews and daily review", "Mind map, progress, calendar", "My notes, focus room with sounds", "Themes, search, daily goal", "20 free minutes a day to try premium tools", "3 study sets, files up to 25 MB"] },
-  { id: "premium", icon: "⭐", name: "Premium", tag: "normally $2.99", items: ["Everything in Free", "Unlimited AI tutor, notes, cards and quizzes", "Listen: two-host podcast of any topic", "Cheat sheets, snap and solve, exam builder", "Glossary and swipe game", "30 study sets, files up to 200 MB"] },
-  { id: "plus", icon: "✨", name: "Premium Plus", tag: "the top plan", items: ["Everything in Premium", "Exam predictor with model answers", "Write and grade: your answer marked", "Mix-ups, memory boost, practice lab", "Share study sets by link", "A smarter AI model", "100 study sets, files up to 1 GB"] },
+  { id: "free", icon: "🌱", name: "Free", tag: "forever", items: ["Read and review everything you made", "Flashcard reviews and the daily review", "Calendar, streak and aura", "A simple focus timer, light and dark mode", "20 free minutes a day to try premium tools", "2 study sets, files up to 10 MB"] },
+  { id: "premium", icon: "⭐", name: "Premium", tag: "normally $2.99", items: ["Everything in Free", "Unlimited AI tutor, notes, cards and quizzes", "Listen: two-host podcast of any topic", "Cheat sheets, snap and solve, exam builder", "Mind map, glossary, study schedule", "Mistake notebook, printable cards", "Summariser and quick cards, read aloud", "My notes, progress dashboard, focus sounds", "30 study sets, files up to 200 MB"] },
+  { id: "plus", icon: "✨", name: "Premium Plus", tag: "the top plan", items: ["Everything in Premium", "Exam predictor with model answers", "Write and grade: your answer marked", "Mix-ups, memory boost, practice lab", "Essay outline and full study guide", "Improve weak flashcards with AI", "Studio voice for tutor calls", "Share study sets by link, a smarter AI model", "100 study sets, files up to 1 GB"] },
 ];
 const planNow = () => S.me?.plan || (S.me?.premium ? "premium" : "free");
 function plansHtml(highlight) {
@@ -309,31 +310,46 @@ const TOOL_VIEW = /\/(listen|boost|lab|grade|cheat|exam|glossary|predictor|mixup
 const isToolView = () => TOOL_VIEW.test(location.hash);
 function requestNote() {
   const r = S.me?.request;
-  if (!r || S.me?.premium && r.status !== "pay") return "";
+  if (!r || (r.kind && r.kind !== "premium") || S.me?.premium && r.status !== "pay") return "";
   const text = { pending: "Your request is with Awsaa. You will get the answer here.", pay: `Awsaa replied: ${PLAN_NAMES[r.plan] || "the plan"} is ${r.price || "$2.99"}. Check your messages for how to pay.`, declined: "Your last request was not approved. You can ask again.", free: "", paid: "" }[r.status];
   return text ? `<p class="note-card req-note">${esc(text)}</p>` : "";
 }
-function askSheet(plan = "premium") {
-  let pick = plan === "plus" ? "plus" : "premium";
-  sheet(`<h3>💌 Ask Awsaa for a plan</h3><p class="muted">Write a short message. Awsaa sees it in their panel and answers you right here in the app. Prefer email? <a href="${esc(mailLink())}">Send an email instead</a>.</p>
+const KIND_INFO = {
+  premium: ["⭐", "Ask for premium", "e.g. I am studying for my biology exam and Cramly helps a lot."],
+  question: ["❓", "Ask a question", "What would you like to know?"],
+  bug: ["🐞", "Report a problem", "What went wrong? Which screen were you on?"],
+  idea: ["💡", "Share an idea", "What would make Cramly better for you?"],
+};
+function askSheet(plan = "premium", kind = "premium") {
+  let pick = plan === "plus" ? "plus" : "premium", k = KIND_INFO[kind] ? kind : "premium";
+  sheet(`<h3>💌 Contact Awsaa</h3><p class="muted">Your message goes straight to Awsaa's panel and the answer comes back right here in the app. Prefer email? <a href="${esc(mailLink())}">Send an email instead</a>.</p>
+    <div class="seg kinds" id="ask-kind">${Object.entries(KIND_INFO).map(([id, [e, n]]) => `<button type="button" data-k="${id}">${e} ${n}</button>`).join("")}</div>
     <div class="seg" id="ask-plan"><button type="button" data-p="premium">⭐ Premium</button><button type="button" data-p="plus">✨ Premium Plus</button></div>
     ${S.me?.name ? "" : '<label>Your name<input id="ask-name" maxlength="40" autocomplete="given-name"></label>'}
-    <label>Your message <span class="muted">(optional)</span><textarea id="ask-msg" rows="4" maxlength="800" placeholder="e.g. I am studying for my biology exam and Cramly helps a lot."></textarea></label>
+    <label><span id="ask-label">Your message</span><textarea id="ask-msg" rows="4" maxlength="800"></textarea></label>
     <div class="sheet-actions"><button class="btn" data-close>Cancel</button><button class="btn primary" id="ask-send" type="button">Send to Awsaa</button></div>`, () => {
-    const mark = () => $$("#ask-plan button").forEach((b) => b.classList.toggle("on", b.dataset.p === pick));
+    const mark = () => {
+      $$("#ask-plan button").forEach((b) => b.classList.toggle("on", b.dataset.p === pick));
+      $$("#ask-kind button").forEach((b) => b.classList.toggle("on", b.dataset.k === k));
+      $("#ask-plan").hidden = k !== "premium";
+      $("#ask-msg").placeholder = KIND_INFO[k][2];
+      $("#ask-label").textContent = k === "premium" ? "Your message (optional)" : "Your message";
+    };
     mark();
     $$("#ask-plan button").forEach((b) => b.addEventListener("click", () => { pick = b.dataset.p; mark(); }));
+    $$("#ask-kind button").forEach((b) => b.addEventListener("click", () => { k = b.dataset.k; mark(); }));
     $("#ask-send").addEventListener("click", async (e) => {
       const btn = e.currentTarget; btn.disabled = true;
       try {
-        await api("/api/request", { body: { plan: pick, message: $("#ask-msg").value, name: $("#ask-name")?.value || "" } });
-        S.me = { ...S.me, request: { status: "pending", plan: pick } };
+        await api("/api/request", { body: { kind: k, plan: pick, message: $("#ask-msg").value, name: $("#ask-name")?.value || "" } });
+        if (k === "premium") S.me = { ...S.me, request: { status: "pending", plan: pick, kind: "premium" } };
         closeSheet();
-        sheet(`<div class="gift"><div class="gift-ico">📨</div><h3>Sent to Awsaa</h3><p class="muted">You will get the answer right here in the app, usually soon. Keep using the free tools meanwhile.</p><button class="btn primary big" data-close type="button">Great</button></div>`);
+        sheet(`<div class="gift"><div class="gift-ico">📨</div><h3>Sent to Awsaa</h3><p class="muted">You will get the answer right here in the app. Keep using the free tools meanwhile.</p><button class="btn primary big" data-close type="button">Great</button></div>`);
       } catch (err) { toast(err.message, true); btn.disabled = false; }
     });
   });
 }
+const openContact = (kind = "question") => { closeSheet(); setTimeout(() => askSheet("premium", kind), 100); };
 const askButtons = (plan) => `<button class="btn primary" id="ask-open" type="button">${ic("mail")} Message Awsaa here</button><a class="btn" href="${esc(mailLink())}">Email instead</a>`;
 function wireAsk(plan) { $("#ask-open")?.addEventListener("click", () => { closeSheet(); askSheet(plan); }); }
 

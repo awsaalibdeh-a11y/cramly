@@ -332,7 +332,7 @@ def access_view(user):
             "banned": bool(user["banned"]), "ban_reason": user["ban_reason"] or "",
             "timeout_until": user["timeout_until"] if (user["timeout_until"] or 0) > time.time() else 0,
             "maintenance": db.setting("maintenance") == "1", "maintenance_msg": db.setting("maintenance_msg"),
-            "request": {"id": last_req["id"], "status": last_req["status"], "plan": last_req["plan"], "price": last_req["price"]} if last_req else None,
+            "request": {"id": last_req["id"], "status": last_req["status"], "plan": last_req["plan"], "price": last_req["price"], "kind": last_req["kind"] or "premium"} if last_req else None,
             "inbox": [{"id": m["id"], "body": m["body"], "created": m["created"]} for m in inbox]}
 
 

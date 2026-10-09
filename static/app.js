@@ -187,8 +187,10 @@ function shell({ tab = "", set = null, crumbs = [], tutor = false, topicId = 0 }
       <a href="#/calendar" class="${on("calendar")}">${ic("calendar")}Calendar</a>
       <a href="#/review" class="${on("review")}">${ic("cards")}Daily review${due ? `<span class="badge">${due}</span>` : ""}</a>
       <a href="#/record" class="${on("record")}">${ic("mic")}Record lecture</a>
-      <a href="#/solve" class="${on("solve")}">${ic("camera")}Snap and solve<span class="badge new">new</span></a>
-      <a href="#/progress" class="${on("progress")}">${ic("chart")}Progress</a>
+      <a data-need="premium" href="#/solve" class="${on("solve")}">${ic("camera")}Snap and solve</a>
+      <a data-need="premium" href="#/progress" class="${on("progress")}">${ic("chart")}Progress</a>
+      <a data-need="premium" href="#/summarize" class="${on("summarize")}">${ic("sheet")}Summariser</a>
+      <a data-need="premium" href="#/quickcards" class="${on("quickcards")}">${ic("cards")}Quick cards</a>
       <a href="#/focus" class="${on("focus")}">${ic("timer")}Focus room</a>
     </nav>
     ${set ? `
@@ -199,23 +201,33 @@ function shell({ tab = "", set = null, crumbs = [], tutor = false, topicId = 0 }
       <button class="nav" data-tutor="ask">${ic("chat")}Chat with tutor</button>
       <button class="nav" data-tutor="guided">${ic("cap")}Tutor me</button>
       <a href="#/set/${sid}/cards" class="${on("cards")}">${ic("cards")}Flashcards</a>
-      <a href="#/set/${sid}/swipe" class="${on("swipe")}">${ic("swipe")}Swipe game<span class="badge new">new</span></a>
       <a href="#/set/${sid}/test" class="${on("test")}">${ic("test")}Practice test</a>
-      <a href="#/set/${sid}/exam" class="${on("exam")}">${ic("timer")}Exam builder</a>
-      <a href="#/set/${sid}/map" class="${on("map")}">${ic("network")}Mind map</a>
-      <a href="#/set/${sid}/cheat" class="${on("cheat")}">${ic("sheet")}Cheat sheet</a>
-      <a href="#/set/${sid}/glossary" class="${on("glossary")}">${ic("book")}Glossary</a>
-      <a href="#/set/${sid}/predictor" class="${on("predictor")}">${ic("sparkle")}Exam predictor<span class="ptag plus">PLUS</span></a>
-      <a href="#/set/${sid}/mixups" class="${on("mixups")}">${ic("swipe")}Mix-ups<span class="ptag plus">PLUS</span></a>
+      <a href="#/set/${sid}/swipe" class="${on("swipe")}">${ic("swipe")}Swipe game</a>
       <a href="#/set/${sid}/match" class="${on("match")}">${ic("puzzle")}Match game</a>
       <a href="#/set/${sid}/add" class="${on("add")}">${ic("upload")}Add material</a>
     </nav>
+    <details class="grp" data-g="prem" ${ls.get("cramly.g.prem", true) ? "open" : ""}><summary>Premium tools</summary><nav>
+      <a data-need="premium" href="#/set/${sid}/map" class="${on("map")}">${ic("network")}Mind map</a>
+      <a data-need="premium" href="#/set/${sid}/schedule" class="${on("schedule")}">${ic("calendar")}Study schedule</a>
+      <a data-need="premium" href="#/set/${sid}/exam" class="${on("exam")}">${ic("timer")}Exam builder</a>
+      <a data-need="premium" href="#/set/${sid}/cheat" class="${on("cheat")}">${ic("sheet")}Cheat sheet</a>
+      <a data-need="premium" href="#/set/${sid}/glossary" class="${on("glossary")}">${ic("book")}Glossary</a>
+      <a data-need="premium" href="#/set/${sid}/mistakes" class="${on("mistakes")}">${ic("book")}Mistake notebook</a>
+      <a data-need="premium" href="#/set/${sid}/print" class="${on("print")}">${ic("print")}Print flashcards</a>
+    </nav></details>
+    <details class="grp" data-g="plus" ${ls.get("cramly.g.plus", true) ? "open" : ""}><summary>Premium Plus tools</summary><nav>
+      <a data-need="plus" href="#/set/${sid}/predictor" class="${on("predictor")}">${ic("sparkle")}Exam predictor</a>
+      <a data-need="plus" href="#/set/${sid}/mixups" class="${on("mixups")}">${ic("swipe")}Mix-ups</a>
+      <a data-need="plus" href="#/set/${sid}/outline" class="${on("outline")}">${ic("edit")}Essay outline</a>
+      <a data-need="plus" href="#/set/${sid}/guide" class="${on("guide")}">${ic("sheet")}Study guide</a>
+    </nav></details>
     <div class="sep">Materials</div>
     <div class="mats">${(S.cur?.materials || []).map((m) => `<span title="${esc(m.name)}">${esc(m.name)}</span>`).join("") || "<span>Nothing yet</span>"}</div>` : ""}
     <div class="grow"></div>
     ${auraCard()}
     <nav>
       <a href="#/new" class="${on("new")}">${ic("plus")}New study set</a>
+      <button class="nav" id="open-contact">${ic("mail")}Contact Awsaa</button>
       <button class="nav" id="open-settings">${ic("gear")}Settings</button>
     </nav>`;
   $("#top").innerHTML = `
@@ -232,6 +244,7 @@ function shell({ tab = "", set = null, crumbs = [], tutor = false, topicId = 0 }
 function wireShell() {
   $$("[data-tutor]").forEach((b) => b.addEventListener("click", () => openTutor({ mode: b.dataset.tutor, topic: S.ctx?.topicId || 0 })));
   $("#open-settings")?.addEventListener("click", settingsSheet);
+  $("#open-contact")?.addEventListener("click", () => openContact("question"));
   $("#top-tutor")?.addEventListener("click", () => toggleTutor());
   afterShell();
 }
@@ -284,7 +297,6 @@ function paintTutor() {
       <button class="icon-btn" data-tclose aria-label="Close tutor">✕</button></div>
     <div class="t-modes"><button data-mode="guided" class="${c.mode === "guided" ? "on" : ""}">🎓 Guided</button><button data-mode="ask" class="${c.mode === "ask" ? "on" : ""}">💬 Ask</button>
       <select class="t-style" id="t-style" aria-label="Tutor style">${tutorStyleOptions()}</select></div>
-    ${call.on ? `<div class="callbar"><span class="wave"><i></i><i></i><i></i><i></i></span><span id="call-state">${call.speaking ? "Speaking…" : "Listening…"}</span><button class="btn small" id="call-lang" style="margin-left:auto">${voiceLang().startsWith("ar") ? "ع" : "EN"}</button></div>` : ""}
     <div class="t-body" id="t-body"></div>
     <div class="t-input"><div class="composer">
       <textarea id="t-text" rows="1" placeholder="${c.mode === "guided" ? "Answer, or ask anything…" : "Ask your tutor anything…"}" aria-label="Message"></textarea>
@@ -367,7 +379,7 @@ async function sendChat(text, opts = {}) {
 
 /* ---------- voice: dictation and calls (the browser's speech recognition and voices) ---------- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-const call = { on: false, rec: null, speaking: false };
+const call = { on: false, rec: null, speaking: false, muted: false, voiceOn: true, phase: "idle", minimized: false, startedAt: 0 };
 const voiceLang = () => ls.get("cramly.vlang", null) || (navigator.language || "en-US");
 function dictate() {
   if (!SR) { toast("Dictation needs Chrome or Edge.", true); return; }
@@ -380,51 +392,6 @@ function dictate() {
   rec.onerror = (e) => { if (e.error === "not-allowed") toast("Allow the microphone to dictate.", true); };
   try { rec.start(); } catch { /* already running */ }
 }
-function startCall() {
-  if (!SR || !("speechSynthesis" in window)) { toast("Voice calls need Chrome or Edge.", true); return; }
-  call.on = true; call.speaking = false;
-  paintTutor();
-  if (!S.chat.msgs.length && S.ctx.topicId) sendChat(S.chat.mode === "guided" ? `Teach me: ${topicById(S.ctx.topicId)?.title || "this topic"}` : "Give me a quick overview.", { speak: true });
-  else listen();
-}
-function stopCall() {
-  call.on = false; call.speaking = false;
-  try { call.rec?.abort(); } catch { /* ignore */ }
-  speechSynthesis.cancel();
-  paintTutor();
-}
-function listen() {
-  if (!call.on) return;
-  const rec = new SR();
-  call.rec = rec; rec.lang = voiceLang(); rec.interimResults = true; rec.continuous = false;
-  let finalText = "";
-  rec.onresult = (e) => {
-    let t = "";
-    for (const r of e.results) t += r[0].transcript;
-    const ta = $("#t-text"); if (ta) ta.value = t;
-    if (e.results[e.results.length - 1].isFinal) finalText = t;
-  };
-  rec.onend = () => {
-    if (finalText.trim()) { const ta = $("#t-text"); if (ta) ta.value = ""; sendChat(finalText.trim(), { speak: true }); }
-    else if (call.on && !S.chat?.busy && !call.speaking) setTimeout(listen, 350);
-  };
-  rec.onerror = (e) => { if (e.error === "not-allowed" || e.error === "service-not-allowed") { toast("Allow the microphone to call your tutor.", true); stopCall(); } };
-  try { rec.start(); } catch { /* already running */ }
-  const st = $("#call-state"); if (st) st.textContent = "Listening…";
-}
-function speak(text) {
-  if (!call.on) return;
-  const plain = stripMd(text), u = new SpeechSynthesisUtterance(plain);
-  u.lang = isArabic(plain) ? "ar-SA" : voiceLang().startsWith("ar") ? "en-US" : voiceLang();
-  const voices = speechSynthesis.getVoices(), pref = voices.find((v) => v.lang === u.lang) || voices.find((v) => v.lang.startsWith(u.lang.slice(0, 2)));
-  if (pref) u.voice = pref;
-  call.speaking = true;
-  const st = $("#call-state"); if (st) st.textContent = "Speaking…";
-  u.onend = u.onerror = () => { call.speaking = false; if (call.on) listen(); };
-  speechSynthesis.cancel();
-  speechSynthesis.speak(u);
-}
-
 /* ============================================================ router */
 async function loadSet(id) {
   if (S.cur?.set.id === id) return S.cur;
@@ -712,6 +679,7 @@ async function readView(tid) {
       <button class="btn" id="ask">🦉 Ask the tutor</button>${next ? `<a class="btn" href="#/set/${set.id}/t/${next.id}/read">Next topic →</a>` : ""}</div>`;
     $("#done").addEventListener("click", async () => { await api(`/api/topics/${tid}/event`, { body: { kind: "read" } }); await refreshCur(); toast("Marked as read ✓"); go(`#/set/${set.id}/t/${tid}/cards`); });
     $("#ask").addEventListener("click", () => openTutor({ mode: "ask", topic: tid }));
+    readerExtras(tid);
   } catch (e) { if ($("#body")) $("#body").innerHTML = `<div class="empty-hero"><h2>Couldn't write that</h2><p>${esc(e.message)}</p><button class="btn primary" onclick="route()">Try again</button></div>`; }
 }
 
@@ -831,6 +799,7 @@ function quizSession({ title, questions, backHref, onDone, crumbs, set, topicId 
       ${log.length ? `<div class="review-list">${log.map(({ q, k }) => `<div class="rv bad" dir="auto"><b>${esc(q.q)}</b><small>Your answer: ${esc(k >= 0 ? q.options[k] : "No answer")}</small><small>✔ ${esc(q.options[q.answer])}: ${esc(q.why)}</small></div>`).join("")}</div>` : ""}
       <div style="display:flex;gap:.6rem;flex-wrap:wrap;justify-content:center">${log.length ? '<button class="btn primary" id="retry">Retry the ones I missed</button>' : ""}<a class="btn ${log.length ? "" : "primary"}" href="${backHref}">Done</a></div></div></div>`;
     if (good) confetti();
+    try { saveMistakes(set?.id, log); } catch { /* the notebook is optional */ }
     $("#retry")?.addEventListener("click", () => quizSession({ title, questions: log.map((l) => l.q), backHref, onDone: null, crumbs, set, topicId, tab }));
     if (onDone) await onDone(score, questions.length, log);
   };
@@ -1014,7 +983,7 @@ async function recordView() {
 
 /* ============================================================ settings, welcome */
 async function settingsSheet() {
-  sheet(`<h3>⚙️ Settings</h3>${accountBlock()}<label>Your name<input id="s-name" value="${esc(S.me.name || "")}" maxlength="30"></label>
+  sheet(`<h3>⚙️ Settings</h3>${accountBlock()}<button class="btn" id="s-contact" type="button">${ic("mail")} Contact Awsaa: question, problem or idea</button><label>Your name<input id="s-name" value="${esc(S.me.name || "")}" maxlength="30"></label>
     <div class="sheet-actions"><button class="btn primary" id="s-save">Save</button></div><hr>
     <label>Accent colour${accentPicker()}</label><label>Look<div class="seg" id="s-theme"><button data-t="auto">Auto</button><button data-t="light">Light</button><button data-t="dark">Dark</button></div></label><hr>
     <button class="btn" id="s-pair">📱 Use Cramly on another device</button>

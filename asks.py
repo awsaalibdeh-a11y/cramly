@@ -6,6 +6,7 @@ import time
 from flask import jsonify, request
 
 PLAN_NAME = {"premium": "Premium", "plus": "Premium Plus"}
+KINDS = {"premium": "asked for a plan", "question": "sent a question", "bug": "reported a problem", "idea": "shared an idea"}
 
 
 def register(core, admin_only, note, who):
@@ -24,23 +25,27 @@ def register(core, admin_only, note, who):
     @need_user_open
     def ask_for_plan(user):
         b = request.get_json(silent=True) or {}
+        kind = b.get("kind") if b.get("kind") in KINDS else "premium"
         plan = "plus" if b.get("plan") == "plus" else "premium"
         message = str(b.get("message") or "").strip()[:800]
         name = str(b.get("name") or "").strip()[:40]
-        if user["is_premium"] and (plan == "premium" or user["is_plus"]):
+        if kind == "premium" and user["is_premium"] and (plan == "premium" or user["is_plus"]):
             return jsonify(error="You already have that plan."), 400
+        if kind != "premium" and len(message) < 3:
+            return jsonify(error="Write a few words so Awsaa knows what you mean."), 400
         if name and not user["name"]:
             db.run(update(db.users).where(db.users.c.id == user["id"]).values(name=name))
         mine = db.many(select(db.plan_requests).where(db.plan_requests.c.user_id == user["id"]).order_by(db.plan_requests.c.id.desc()))
         if len([r for r in mine if time.time() - r["created"] < 86400]) >= 4:
             return jsonify(error="You have asked a few times today. Awsaa will answer here."), 429
-        pending = next((r for r in mine if r["status"] == "pending"), None)
+        pending = next((r for r in mine if r["status"] == "pending" and (r["kind"] or "premium") == kind), None)
         if pending:
             db.run(update(db.plan_requests).where(db.plan_requests.c.id == pending["id"]).values(plan=plan, message=message, created=time.time()))
             rid = pending["id"]
         else:
-            rid = db.run(insert(db.plan_requests).values(user_id=user["id"], plan=plan, message=message, status="pending", created=time.time()))
-        note(f"{name or user['name'] or '#' + str(user['id'])} asked for {PLAN_NAME[plan]}")
+            rid = db.run(insert(db.plan_requests).values(user_id=user["id"], plan=plan, kind=kind, message=message, status="pending", created=time.time()))
+        who_ = name or user["name"] or "#" + str(user["id"])
+        note(f"{who_} asked for {PLAN_NAME[plan]}" if kind == "premium" else f"{who_} {KINDS[kind]}")
         return jsonify(ok=True, id=rid, status="pending")
 
     @app.get("/api/admin/requests")
@@ -49,7 +54,7 @@ def register(core, admin_only, note, who):
         users = {u["id"]: u for u in db.many(select(db.users))}
         rows = db.many(select(db.plan_requests).order_by(db.plan_requests.c.id.desc()))[:80]
         return jsonify(requests=[{"id": r["id"], "user_id": r["user_id"], "name": (users.get(r["user_id"]) or {}).get("name") or f"#{r['user_id']}",
-                                  "exists": r["user_id"] in users, "plan": r["plan"], "message": r["message"], "status": r["status"],
+                                  "exists": r["user_id"] in users, "plan": r["plan"], "kind": r["kind"] or "premium", "message": r["message"], "status": r["status"],
                                   "created": r["created"], "decided": r["decided"], "price": r["price"], "note": r["note"]} for r in rows],
                        pending=sum(1 for r in rows if r["status"] == "pending"))
 
@@ -85,7 +90,16 @@ def register(core, admin_only, note, who):
         elif decision == "declined":
             tell(uid, text or "Thanks for asking. Premium is not available for you right now, but the free tools are always open.")
             note(f"Declined {who(uid)}'s request")
+        elif decision == "reply":
+            if not text:
+                return jsonify(error="Write your reply first."), 400
+            tell(uid, f"💬 Awsaa replied: {text}")
+            note(f"Replied to {who(uid)}")
+            decision = "answered"
+        elif decision == "close":
+            note(f"Closed {who(uid)}'s message")
+            decision = "closed"
         else:
-            return jsonify(error="Choose free, pay, paid or declined."), 400
+            return jsonify(error="Choose free, pay, paid, declined, reply or close."), 400
         db.run(update(db.plan_requests).where(db.plan_requests.c.id == rid).values(status=decision, plan=plan, decided=time.time(), price=price, note=text))
         return jsonify(ok=True, status=decision)

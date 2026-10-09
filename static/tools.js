@@ -18,15 +18,22 @@ const prettyDay = (iso) => new Date(`${iso}T12:00`).toLocaleDateString([], { day
 function moreTools(set) {
   const id = set.id;
   const card = (href, art, name, sub, plan, bg) => `<a class="mode" style="--bg:${bg}" href="${href}"><div class="art">${art}</div><div class="txt"><small>${sub}</small><b>${name} ${planTag(plan)}</b></div></a>`;
-  return `<h2 class="sec">Study tools <small>Free, Premium and Premium Plus</small></h2>
+  return `<h2 class="sec">Study tools <small>Premium and Premium Plus</small></h2>
     <div class="modes four tools">
-      ${card(`#/set/${id}/map`, "🕸️", "Mind map", "See the big picture", "free", "var(--sky-bg)")}
+      ${card(`#/set/${id}/map`, "🕸️", "Mind map", "See the big picture", "premium", "var(--sky-bg)")}
+      ${card(`#/set/${id}/schedule`, "🗓️", "Study schedule", "Day by day to the exam", "premium", "var(--mint-bg)")}
       ${card(`#/set/${id}/cheat`, "📄", "Cheat sheet", "One page, printable", "premium", "var(--butter)")}
       ${card(`#/set/${id}/exam`, "⏱️", "Exam builder", "Timed, your topics", "premium", "var(--peach)")}
-      ${card(`#/set/${id}/glossary`, "📖", "Glossary", "Every key term", "premium", "var(--mint-bg)")}
+      ${card(`#/set/${id}/glossary`, "📖", "Glossary", "Every key term", "premium", "var(--lilac-2)")}
+      ${card(`#/set/${id}/mistakes`, "📓", "Mistake notebook", "Retry what you missed", "premium", "var(--rose-bg)")}
+      ${card(`#/set/${id}/print`, "🖨️", "Print flashcards", "Cut-out cards", "premium", "var(--sky-bg)")}
+      ${card(`#/quickcards`, "🃏", "Quick cards", "Any text to flashcards", "premium", "var(--mint-bg)")}
+      ${card(`#/summarize`, "📝", "Summariser", "Paste, get the gist", "premium", "var(--butter)")}
       ${card(`#/solve/${id}`, "📸", "Snap and solve", "Photo to answer", "premium", "var(--rose-bg)")}
       ${card(`#/set/${id}/predictor`, "🔮", "Exam predictor", "Likely questions", "plus", "var(--lilac-2)")}
-      ${card(`#/set/${id}/mixups`, "🔀", "Mix-ups", "Tell look-alikes apart", "plus", "var(--butter)")}
+      ${card(`#/set/${id}/mixups`, "🔀", "Mix-ups", "Tell look-alikes apart", "plus", "var(--peach)")}
+      ${card(`#/set/${id}/outline`, "✍️", "Essay outline", "Plan any long answer", "plus", "var(--sky-bg)")}
+      ${card(`#/set/${id}/guide`, "📚", "Study guide", "Everything in one doc", "plus", "var(--mint-bg)")}
       <button class="mode" id="share-set" type="button" style="--bg:var(--sky-bg)"><div class="art">🔗</div><div class="txt"><small>Send it to a friend</small><b>Share this set ${planTag("plus")}</b></div></button>
     </div>`;
 }
@@ -41,6 +48,11 @@ function setRoute(sub) {
   if (sub === "map") return mapView();
   if (sub === "cheat") return cheatView();
   if (sub === "exam") return examView();
+  if (sub === "schedule") return scheduleView();
+  if (sub === "mistakes") return Promise.resolve(mistakesView());
+  if (sub === "print") return printCardsView();
+  if (sub === "outline") return outlineView();
+  if (sub === "guide") return guideView();
   if (sub === "glossary") return glossaryView();
   if (sub === "predictor") return predictorView();
   if (sub === "mixups") return mixupsView();
@@ -59,6 +71,8 @@ function globalRoute(p) {
   if (p[0] === "solve") return solveView(+p[1] || 0);
   if (p[0] === "progress") return statsView();
   if (p[0] === "focus") return Promise.resolve(focusView());
+  if (p[0] === "summarize") return summarizeView();
+  if (p[0] === "quickcards") return quickCardsView();
   return undefined;
 }
 
@@ -386,7 +400,7 @@ async function statsView() {
   shell({ tab: "progress", crumbs: [{ text: "Home", href: "#/" }, { text: "Progress" }] });
   $("#view").innerHTML = `<div class="session">${skeleton("Adding it all up…")}</div>`;
   let d;
-  try { d = await api("/api/stats"); } catch (e) { return failView("Could not load your progress", e); }
+  try { d = await api("/api/stats?full=1"); } catch (e) { return failView("Could not load your progress", e); }
   const t = d.totals, lvl = levelFor(aura());
   const first = new Date(`${d.days[0].day}T12:00`).getDay();                  // weekday of the oldest cell: pads the first column
   const level = (n) => (n >= 10 ? 4 : n >= 6 ? 3 : n >= 3 ? 2 : n >= 1 ? 1 : 0);
@@ -426,7 +440,7 @@ async function cardEditView(tid) {
   $("#view").innerHTML = `<div class="ce"><div class="home-head"><div><p class="eyebrow">${esc(t.title)}</p><h1>Edit flashcards ✏️</h1><p class="muted"><span id="ce-n">${cards.length}</span> cards. Changes save when you leave a box.</p></div>
       <a class="btn" href="#/set/${set.id}/t/${tid}/cards">Study these</a></div>
     <div class="cfg-card ce-new"><b>Add a card</b><div class="ce-row"><label>Front<textarea id="nf" rows="2" maxlength="500" placeholder="Question or term"></textarea></label><label>Back<textarea id="nb" rows="2" maxlength="800" placeholder="Answer"></textarea></label>
-      <button class="btn primary" id="ce-add" type="button">Add</button></div><button class="btn" id="ce-ai" type="button">${ic("sparkle")} Add 6 more with AI</button></div>
+      <button class="btn primary" id="ce-add" type="button">Add</button></div><button class="btn" id="ce-ai" type="button">${ic("sparkle")} Add 6 more with AI</button> <button class="btn" id="ce-fix" type="button">${ic("sparkle")} Improve weak cards ${planTag("plus")}</button></div>
     <div id="ce-list">${cards.map(row).join("") || '<p class="muted">No cards yet. Add one above.</p>'}</div></div>`;
   const count = () => { $("#ce-n").textContent = $$(".ce-row[data-id]").length; };
   const wire = (el) => {
@@ -451,6 +465,14 @@ async function cardEditView(tid) {
       const { card } = await api(`/api/topics/${tid}/cards/add`, { body: { front: $("#nf").value, back: $("#nb").value } });
       $("#nf").value = ""; $("#nb").value = ""; addRows([card]); $("#nf").focus();
     } catch (e) { toast(e.message, true); }
+  });
+  $("#ce-fix").addEventListener("click", async (ev) => {
+    const b = ev.currentTarget; b.disabled = true;
+    try {
+      const { cards: fixed } = await api(`/api/topics/${tid}/cards/improve`, { body: {} });
+      sheet(`<h3>Sharper cards ✨</h3><p class="muted">${fixed.length} weak cards were rewritten. Each comes with a memory hook.</p><div class="qc-grid one">${fixed.map((c) => `<article class="qc"><b dir="auto">${esc(c.front)}</b><p dir="auto">${esc(c.back)}</p><small dir="auto">💡 ${esc(c.tip)}</small></article>`).join("")}</div><div class="sheet-actions"><button class="btn primary" data-close>Done</button></div>`, () => $("#sheet").addEventListener("close", () => cardEditView(tid), { once: true }));
+    } catch (e) { toast(e.message, true); }
+    b.disabled = false;
   });
   $("#ce-ai").addEventListener("click", async (ev) => {
     const b = ev.currentTarget; b.disabled = true; b.textContent = "Writing…";
