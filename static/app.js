@@ -560,13 +560,19 @@ async function newView(targetId = 0) {
       <button class="link" id="sample2" style="justify-self:start">No notes handy? Try sample notes</button>
     </div>
     <aside class="tips"><h3>What works best</h3><ul><li>Lecture slides and typed notes give the cleanest plans.</li><li>Photos: good light, one page per photo, text facing up.</li>
-      <li>Several files at once is fine: I'll organise them together.</li><li>Arabic, English or both, I keep your language.</li><li>Long textbooks (hundreds of pages) work, they just take a little longer.</li></ul></aside></div></div>`;
+      <li>Several files at once is fine: I'll organise them together.</li><li>Arabic, English or both, I keep your language.</li><li>Files up to 1 GB are fine. Long textbooks (hundreds of pages) just take a little longer.</li></ul></aside></div></div>`;
   const paint = () => {
     $("#files").innerHTML = picked.map((f, i) => `<div class="file"><span>📄 ${esc(f.name)}</span><small>${(f.size / 1048576).toFixed(1)} MB</small><button data-rm="${i}" aria-label="Remove">✕</button></div>`).join("");
     $$("[data-rm]").forEach((b) => b.addEventListener("click", () => { picked.splice(+b.dataset.rm, 1); paint(); }));
     $("#go").disabled = !(picked.length || $("#text").value.trim().length >= 80);
+    const mb = picked.reduce((n, f) => n + f.size, 0) / 1048576;
+    if (mb > 40) $("#files").insertAdjacentHTML("beforeend", `<p class="muted small">${mb.toFixed(0)} MB to upload. Big files take a few minutes: keep this tab open.</p>`);
   };
-  const add = (list) => { picked = [...picked, ...list].slice(0, 8); paint(); };
+  const add = (list) => {
+    const ok = list.filter((f) => f.size <= 1024 ** 3);
+    if (ok.length < list.length) toast("Files can be up to 1 GB. Skipped the bigger ones.", true);
+    picked = [...picked, ...ok].slice(0, 8); paint();
+  };
   const drop = $("#drop");
   drop.addEventListener("click", () => $("#file").click());
   drop.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("#file").click(); } });

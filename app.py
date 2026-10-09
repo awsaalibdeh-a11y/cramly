@@ -32,7 +32,7 @@ from db import delete, insert, select, update  # noqa: E402
 
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
-app.config["MAX_CONTENT_LENGTH"] = 60 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024 + 8 * 1024 * 1024          # up to 1 GB of files per upload
 BASE = os.path.dirname(os.path.abspath(__file__))
 MAX_SETS = 30
 INTERVAL_DAYS = [0, 1, 3, 7, 14, 30]                                   # Leitner boxes 0..5
@@ -516,10 +516,15 @@ def friendly(exc):
 def read_materials(files, pasted, label):
     """Yields status events, then ("mats", [(name, kind, text)...])."""
     mats = []
-    for name, data in files:
-        yield "status", f"Reading {name}…"
-        kind, text = ingest.read_file(name, data)
-        mats.append((name, kind, text))
+    try:
+        for name, path in files:
+            yield "status", f"Reading {name}…"
+            kind, text = ingest.read_path(name, path)
+            mats.append((name, kind, text))
+            _drop(path)
+    finally:
+        for _, path in files:
+            _drop(path)
     if pasted:
         mats.append((label, "lecture" if label.lower().startswith("lecture") else "text", pasted))
     yield "mats", mats
@@ -529,8 +534,35 @@ def _combined(mats):
     return "\n\n".join(f"=== {n} ===\n{t}" for n, _, t in mats)[:ingest.MAX_TEXT]
 
 
+def _drop(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def _spool(f):
+    """Copies one uploaded file to a temp file on disk, in chunks, so even a huge file never sits in memory."""
+    import tempfile
+    for old in os.listdir(tempfile.gettempdir()):                       # sweep leftovers from interrupted uploads
+        if old.startswith("cramly_up_"):
+            p = os.path.join(tempfile.gettempdir(), old)
+            if time.time() - os.path.getmtime(p) > 3600:
+                _drop(p)
+    fd, path = tempfile.mkstemp(prefix="cramly_up_")
+    with os.fdopen(fd, "wb") as out:
+        while chunk := f.stream.read(1024 * 1024):
+            out.write(chunk)
+    return path
+
+
+@app.errorhandler(413)
+def too_big(_):
+    return jsonify(error="That upload is bigger than 1 GB. Try fewer or smaller files."), 413
+
+
 def _upload_inputs():
-    files = [(f.filename or "file", f.read()) for f in request.files.getlist("files")[:8]]
+    files = [(f.filename or "file", _spool(f)) for f in request.files.getlist("files")[:8]]
     pasted = ingest.clean(request.form.get("text") or "")[:ingest.MAX_TEXT]
     label = (request.form.get("name") or "Pasted notes")[:80]
     return files, pasted, label

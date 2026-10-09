@@ -540,6 +540,49 @@ class OwnerSwitches(Base):
         self.assertEqual(self.c.get("/api/me", headers=self.h).status_code, 401)
 
 
+class BigUploads(Base):
+    """Files up to 1 GB are streamed to disk and read from there."""
+
+    def test_big_text_file_is_read_without_loading_it_all(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as f:
+            f.write(b"Mitochondria make ATP for the cell. " * 600_000)       # about 22 MB
+            path = f.name
+        try:
+            kind, text = ingest.read_path("big.txt", path)
+        finally:
+            os.remove(path)
+        self.assertEqual(kind, "text")
+        self.assertLessEqual(len(text), ingest.MAX_TEXT)
+
+    def test_limits_are_one_gigabyte_and_twenty_for_photos(self):
+        self.assertEqual(ingest.MAX_FILE, 1024 ** 3)
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
+            f.write(b"x" * (21 * 1024 * 1024))
+            path = f.name
+        try:
+            with self.assertRaises(ingest.ai.AIError) as e:
+                ingest.read_path("photo.png", path)
+            self.assertIn("20 MB", str(e.exception))
+        finally:
+            os.remove(path)
+
+    def test_oversized_request_gets_a_clear_message(self):
+        with mock.patch.dict(server.app.config, {"MAX_CONTENT_LENGTH": 1000}):
+            r = self.c.post("/api/sets", headers=self.h, data={"files": (io.BytesIO(b"a" * 5000), "n.txt")})
+        self.assertEqual(r.status_code, 413)
+        self.assertIn("1 GB", r.get_json()["error"])
+
+    def test_uploaded_files_do_not_pile_up_in_temp(self):
+        import tempfile
+        before = {n for n in os.listdir(tempfile.gettempdir()) if n.startswith("cramly_up_")}
+        with mock.patch.object(ai, "make_plan", return_value=PLAN), mock.patch.object(ai, "make_notes", return_value="n"):
+            self.c.post("/api/sets", headers=self.h, data={"files": (io.BytesIO(("Cells are the basic unit of life. " * 40).encode()), "n.txt")}).get_data()
+        after = {n for n in os.listdir(tempfile.gettempdir()) if n.startswith("cramly_up_")}
+        self.assertEqual(after - before, set())
+
+
 class Reading(unittest.TestCase):
     def test_text_and_unknown_files(self):
         kind, text = ingest.read_file("notes.txt", ("Photosynthesis uses light. " * 5).encode())
