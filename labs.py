@@ -170,5 +170,7 @@ def register(core):
 
     import tools3                                                        # summariser, quick cards, outline, card improver, study guide
     tools3.register(core, ai_error, digest)
+    import tools4                                                        # daily challenge, smart drill, import cards, rewrite notes
+    tools4.register(core, ai_error)
     import sharing                                                       # sharing lives next door
     sharing.register(core, ai_error)

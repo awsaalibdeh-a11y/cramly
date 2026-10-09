@@ -189,20 +189,35 @@ function readerExtras(tid) {
     for (const p of sentences(prose.innerText)) { if (mine !== token) return; await speakBrowser(p); }
     playing = false; label();
   });
-  const pop = Object.assign(document.createElement("button"), { className: "sel-pop", type: "button", hidden: true, innerHTML: "🦉 Ask the tutor" });
+  const pop = Object.assign(document.createElement("div"), { className: "sel-pop", hidden: true });
+  pop.innerHTML = `<button type="button" data-a="ask">🦉 Ask</button><button type="button" data-h="y" class="hlb y" aria-label="Highlight yellow"></button><button type="button" data-h="g" class="hlb g" aria-label="Highlight green"></button><button type="button" data-h="p" class="hlb p" aria-label="Highlight pink"></button>`;
   document.body.append(pop);
   const hide = () => { pop.hidden = true; };
+  let saved = null;
   const check = () => {
     const sel = getSelection(), text = sel.toString().trim();
-    if (text.length < 4 || !sel.rangeCount || !prose.contains(sel.anchorNode)) return hide();
+    if (text.length < 3 || !sel.rangeCount || !prose.contains(sel.anchorNode)) return hide();
     const r = sel.getRangeAt(0).getBoundingClientRect();
-    pop.style.left = `${Math.min(innerWidth - 150, Math.max(8, r.left + r.width / 2 - 65))}px`; pop.style.top = `${Math.max(8, r.top - 46)}px`;
-    pop.dataset.text = text.slice(0, 400); pop.hidden = false;
+    pop.style.left = `${Math.min(innerWidth - 190, Math.max(8, r.left + r.width / 2 - 90))}px`; pop.style.top = `${Math.max(8, r.top - 50)}px`;
+    pop.dataset.text = text.slice(0, 400); saved = sel.getRangeAt(0).cloneRange(); pop.hidden = false;
   };
   prose.addEventListener("pointerup", () => setTimeout(check, 20)); prose.addEventListener("keyup", check);
-  const away = (e) => { if (e.target !== pop) hide(); };
+  const away = (e) => { if (!pop.contains(e.target)) hide(); };
   document.addEventListener("pointerdown", away);
-  pop.addEventListener("click", () => { const text = pop.dataset.text; hide(); openTutor({ mode: "ask", topic: tid }); setTimeout(() => sendChat(`Explain this simply: "${text}"`), 450); });
+  pop.addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    const text = pop.dataset.text; hide();
+    if (b.dataset.a === "ask") { openTutor({ mode: "ask", topic: tid }); setTimeout(() => sendChat(`Explain this simply: "${text}"`), 450); return; }
+    if (!canPremium()) return needPlans("Highlights");
+    const done = wrapRange(saved, b.dataset.h);
+    ls.set(hlKey(tid), [...ls.get(hlKey(tid), []), ...done].slice(-60)); getSelection().removeAllRanges(); updateHl();
+  });
+  applyHighlights(prose, tid);
+  bar.insertAdjacentHTML("afterbegin", `<button class="btn" id="rd-hl" type="button">🖍️ Highlights <span id="rd-hln"></span></button><button class="btn" id="rd-rw" type="button">✨ Rewrite ${planTag("plus")}</button>`);
+  const updateHl = () => { const n = ls.get(hlKey(tid), []).length; $("#rd-hln").textContent = n ? `(${n})` : ""; };
+  updateHl();
+  $("#rd-hl").addEventListener("click", () => highlightsSheet(tid, prose));
+  $("#rd-rw").addEventListener("click", () => rewriteSheet(tid));
   const prev = S.cleanup;
   S.cleanup = () => { prev?.(); pop.remove(); document.removeEventListener("pointerdown", away); token++; };
 }

@@ -22,6 +22,7 @@
   <script defer src="{{ url_for('static', filename='tools.js') }}?v={{ v }}"></script>
   <script defer src="{{ url_for('static', filename='tools2.js') }}?v={{ v }}"></script>
   <script defer src="{{ url_for('static', filename='tools3.js') }}?v={{ v }}"></script>
+  <script defer src="{{ url_for('static', filename='tools4.js') }}?v={{ v }}"></script>
   <script defer src="{{ url_for('static', filename='ui.js') }}?v={{ v }}"></script>
   <script defer src="{{ url_for('static', filename='call.js') }}?v={{ v }}"></script>
   <script defer src="{{ url_for('static', filename='compress.js') }}?v={{ v }}"></script>
@@ -61,7 +62,7 @@
 
   <nav class="tabbar" id="tabbar" hidden>
     <a href="#/" data-tab="home"><i data-ic="home"></i><span>Home</span></a>
-    <a href="#/calendar" data-tab="calendar"><i data-ic="calendar"></i><span>Plan</span></a>
+    <button type="button" id="tab-more" data-tab="more"><i data-ic="grid"></i><span>More</span></button>
     <a href="#/new" data-tab="new" class="plus"><i data-ic="plus"></i><span>New</span></a>
     <a href="#/review" data-tab="review"><i data-ic="cards"></i><span>Review</span></a>
     <button type="button" id="tab-tutor" data-tab="tutor"><i data-ic="chat"></i><span>Tutor</span></button>

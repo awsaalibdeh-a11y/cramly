@@ -25,14 +25,14 @@ const paletteButton = () => `<button class="chip-btn" id="pal-btn" title="Search
 function paletteItems() {
   const items = [
     ["🏠", "Home", "#/"], ["📅", "Calendar", "#/calendar"], ["🃏", "Daily review", "#/review"], ["🎙️", "Record a lecture", "#/record"],
-    ["➕", "New study set", "#/new"], ["📸", "Snap and solve", "#/solve"], ["📈", "Progress", "#/progress"], ["🎧", "Focus room", "#/focus"], ["📝", "Summariser", "#/summarize"], ["🃏", "Quick cards", "#/quickcards"],
+    ["➕", "New study set", "#/new"], ["📸", "Snap and solve", "#/solve"], ["📈", "Progress", "#/progress"], ["🎧", "Focus room", "#/focus"], ["📝", "Summariser", "#/summarize"], ["🃏", "Quick cards", "#/quickcards"], ["🎯", "Smart drill", "#/drill"], ["📊", "Weekly report", "#/report"],
   ].map(([e, t, h]) => ({ e, t, h, k: "Go to" }));
   (S.sets || []).forEach((s) => items.push({ e: s.emoji, t: s.title, h: `#/set/${s.id}`, k: "Study set" }));
   const set = S.cur?.set;
   if (set) {
     const id = set.id;
     [["🕸️", "Mind map", "map"], ["📄", "Cheat sheet", "cheat"], ["⏱️", "Exam builder", "exam"], ["📖", "Glossary", "glossary"], ["🔮", "Exam predictor", "predictor"],
-      ["🔀", "Mix-ups", "mixups"], ["🗓️", "Study schedule", "schedule"], ["📓", "Mistake notebook", "mistakes"], ["🖨️", "Print flashcards", "print"], ["✍️", "Essay outline", "outline"], ["📚", "Study guide", "guide"], ["🃏", "Flashcards", "cards"], ["🕹️", "Swipe game", "swipe"], ["🎯", "Practice test", "test"], ["🧩", "Match game", "match"]]
+      ["🔀", "Mix-ups", "mixups"], ["🗓️", "Study schedule", "schedule"], ["⌨️", "Typing practice", "type"], ["📓", "Mistake notebook", "mistakes"], ["🖨️", "Print flashcards", "print"], ["✍️", "Essay outline", "outline"], ["📚", "Study guide", "guide"], ["🃏", "Flashcards", "cards"], ["🕹️", "Swipe game", "swipe"], ["🎯", "Practice test", "test"], ["🧩", "Match game", "match"]]
       .forEach(([e, t, h]) => items.push({ e, t: `${t}`, h: `#/set/${id}/${h}`, k: set.title }));
     (S.cur.topics || []).forEach((t) => {
       [["read", "Read"], ["cards", "Flashcards"], ["quiz", "Quiz"], ["listen", "Listen"], ["boost", "Memory boost"], ["lab", "Practice lab"], ["grade", "Write and grade"], ["notes", "My notes"]]
@@ -142,7 +142,7 @@ function focusView() {
       <div id="fr-controls"></div></section>
       <section class="fr-side"><div class="panel"><h3>Sound</h3><div class="sounds" id="fr-sounds">${sounds.map(([k, n, e]) => `<button type="button" data-k="${k}" class="${ambient.kind === k ? "on" : ""}"><span>${e}</span>${n}</button>`).join("")}</div>
           <label class="vol">${ic("volume")}<input type="range" id="fr-vol" min="0" max="1" step="0.05" value="${ls.get("cramly.ambientVol", 0.35)}" aria-label="Volume"></label></div>
-        <div class="panel"><h3>Your week <small class="muted">${focusWeek().reduce((n, d) => n + d.m, 0)} min</small></h3><div class="week">${focusWeek().map((d) => `<div class="wk"><i class="${d.m ? "on" : ""}" style="height:${Math.max(6, Math.min(100, d.m * 1.2))}%" title="${d.m} min"></i><small>${d.label}</small></div>`).join("")}</div>
+        ${focusTasksHtml()}<div class="panel"><h3>Your week <small class="muted">${focusWeek().reduce((n, d) => n + d.m, 0)} min</small></h3><div class="week">${focusWeek().map((d) => `<div class="wk"><i class="${d.m ? "on" : ""}" style="height:${Math.max(6, Math.min(100, d.m * 1.2))}%" title="${d.m} min"></i><small>${d.label}</small></div>`).join("")}</div>
           <p class="muted small">Today: <b>${focusToday()} min</b></p></div></section></div></div>`;
   let pick = ls.get("cramly.focusLen", 25);
   const controls = () => {
@@ -174,7 +174,7 @@ function focusView() {
   const tick = setInterval(() => { if (!$("#fr-time")) return clearInterval(tick); paint(); }, 500);
   $("#fr-sounds").addEventListener("click", (e) => { const b = e.target.closest("button[data-k]"); if (!b) return; setAmbient(b.dataset.k); $$("#fr-sounds button").forEach((x) => x.classList.toggle("on", x === b)); });
   $("#fr-vol").addEventListener("input", (e) => { ls.set("cramly.ambientVol", +e.target.value); if (ambient.gain) ambient.gain.gain.value = +e.target.value * (ambient.kind === "white" ? 0.35 : 1); });
-  controls(); paint();
+  controls(); paint(); wireFocusTasks();
 }
 
 /* ============================================================ home: daily goal, continue card, getting-started checklist */
@@ -193,6 +193,7 @@ function ringSvg(p, label, sub, color = "var(--grape)") {
 async function paintHomeExtras(sets) {
   const box = $("#home-extra");
   if (!box) return;
+  setTimeout(maybeTour, 900);
   let st = null;
   try { st = await api("/api/stats"); } catch { /* the cards below still work */ }
   if (!$("#home-extra")) return;
@@ -217,5 +218,56 @@ async function paintHomeExtras(sets) {
     const n = Math.max(1, Math.min(50, parseInt(v, 10) || 0)); if (v !== null && n) { ls.set("cramly.goal", n); paintHomeExtras(sets); }
   });
   $("#hide-start")?.addEventListener("click", () => { ls.set("cramly.hideStart", true); paintHomeExtras(sets); });
+  paintDaily(box);
   if (done && !ls.get(`cramly.goalDone.${todayKey()}`, false)) { ls.set(`cramly.goalDone.${todayKey()}`, true); try { addAura(25); confetti(80); toast("Daily goal reached! +25 aura 🎯"); } catch { /* decoration */ } }
+}
+
+Object.assign(ICON, { grid: '<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>' });
+
+/* ============================================================ the More sheet: every tool in one place (the phone's sidebar) */
+function moreSheet() {
+  const set = S.cur?.set, id = set?.id;
+  const tile = (e, n, h, need = "") => `<a class="more-tile ${need}" href="${h}" data-close-more>${`<span>${e}</span>`}<b>${n}</b>${need === "plus" ? '<i class="ptag plus">PLUS</i>' : ""}</a>`;
+  const global = [["📸", "Snap and solve", "#/solve", "premium"], ["📝", "Summariser", "#/summarize", "premium"], ["🃏", "Quick cards", "#/quickcards", "premium"], ["🎯", "Smart drill", "#/drill", "premium"],
+    ["📈", "Progress", "#/progress", "premium"], ["🎧", "Focus room", "#/focus", ""], ["🎙️", "Record lecture", "#/record", ""], ["📅", "Calendar", "#/calendar", ""], ["📊", "Weekly report", "#/report", "plus"]];
+  const mine = set ? [["🕸️", "Mind map", `#/set/${id}/map`, "premium"], ["🗓️", "Study schedule", `#/set/${id}/schedule`, "premium"], ["📄", "Cheat sheet", `#/set/${id}/cheat`, "premium"], ["⏱️", "Exam builder", `#/set/${id}/exam`, "premium"],
+    ["📖", "Glossary", `#/set/${id}/glossary`, "premium"], ["⌨️", "Typing practice", `#/set/${id}/type`, "premium"], ["📓", "Mistake notebook", `#/set/${id}/mistakes`, "premium"], ["🖨️", "Print flashcards", `#/set/${id}/print`, "premium"],
+    ["🔮", "Exam predictor", `#/set/${id}/predictor`, "plus"], ["🔀", "Mix-ups", `#/set/${id}/mixups`, "plus"], ["✍️", "Essay outline", `#/set/${id}/outline`, "plus"], ["📚", "Study guide", `#/set/${id}/guide`, "plus"]] : [];
+  sheet(`<h3>${ic("grid")} All tools</h3>${set ? `<p class="eyebrow">${esc(set.emoji)} ${esc(set.title)}</p><div class="more-grid">${mine.map((t) => tile(...t)).join("")}</div>` : ""}
+    <p class="eyebrow">Anywhere</p><div class="more-grid">${global.map((t) => tile(...t)).join("")}</div>
+    <div class="more-foot"><button class="btn" id="more-set" type="button">${ic("gear")} Settings</button><button class="btn" id="more-contact" type="button">${ic("mail")} Contact Awsaa</button></div>`, () => {
+    $$("[data-close-more]").forEach((a) => a.addEventListener("click", closeSheet));
+    $("#more-set").addEventListener("click", () => { closeSheet(); setTimeout(settingsSheet, 150); });
+    $("#more-contact").addEventListener("click", () => openContact("question"));
+    markLocks?.();
+  });
+}
+
+/* ============================================================ quick actions on the home page */
+function quickActions() {
+  const due = S.me?.due || 0;
+  return `<div class="quick"><a href="#/new" class="qa a"><span>➕</span><b>New set</b></a><a href="#/review" class="qa b"><span>🃏</span><b>Review</b>${due ? `<i>${due}</i>` : ""}</a><a href="#/focus" class="qa c"><span>🎧</span><b>Focus</b></a><button type="button" class="qa d" id="qa-tutor"><span>🦉</span><b>Ask tutor</b></button></div>`;
+}
+document.addEventListener("click", (e) => { if (e.target.closest("#qa-tutor")) { const id = S.sets?.[0]?.id; if (id) { go(`#/set/${id}`); setTimeout(() => openTutor({ mode: "ask" }), 500); } else go("#/new"); } if (e.target.closest("#tab-more")) moreSheet(); });
+
+/* ============================================================ a short welcome tour for first-time users */
+function maybeTour() {
+  if (ls.get("cramly.toured", false) || $("#sheet")?.open || $("#paywall") || $("#gate")) return;
+  const slides = [
+    ["📚", "Turn your notes into a study plan", "Upload a PDF, slides or a photo of your notebook. Cramly splits it into topics and teaches it back to you."],
+    ["🦉", "Learn it your way", "Chat with the tutor, read short notes, flip flashcards that come back just before you forget, and take quizzes."],
+    ["🧰", "Tools for every exam", "Mind maps, cheat sheets, timed exams, a glossary, a study schedule and more. Open the search with Ctrl+K, or tap More on your phone."],
+    ["🎁", "Free forever, premium on request", "The basics are always free, and you can try every premium tool for 20 minutes a day. Premium is a gift from Awsaa if you ask."],
+  ];
+  let k = 0;
+  const draw = () => {
+    const [e, t, p] = slides[k];
+    $("#sheet-body").innerHTML = `<div class="gift tour"><div class="gift-ico">${e}</div><h3>${esc(t)}</h3><p class="muted">${esc(p)}</p>
+      <div class="dots">${slides.map((_, n) => `<i class="${n === k ? "on" : ""}"></i>`).join("")}</div>
+      <div class="sheet-actions"><button class="btn" id="tour-skip" type="button">Skip</button><button class="btn primary" id="tour-next" type="button">${k + 1 < slides.length ? "Next" : "Let us go"}</button></div></div>`;
+    $("#tour-skip").addEventListener("click", closeSheet);
+    $("#tour-next").addEventListener("click", () => { if (k + 1 < slides.length) { k++; draw(); } else closeSheet(); });
+  };
+  sheet("<div></div>", draw);
+  ls.set("cramly.toured", true);
 }

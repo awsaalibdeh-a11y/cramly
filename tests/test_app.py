@@ -891,6 +891,59 @@ class MoreTools(Base):
         self.assertIn("## 1. Cell basics", g["guide"])
 
 
+class Tools4(Base):
+    """Daily challenge, smart drill, card import and rewrite."""
+    uid, admin, make_link, set_user = Access.uid, Access.admin, Access.make_link, Access.set_user
+
+    def join(self, **link):
+        code, _ = self.make_link(**link)
+        self.c.post("/api/join", headers=self.h, json={"code": code})
+
+    def test_daily_challenge_comes_from_your_own_quizzes_and_is_stable(self):
+        self.join()
+        self.assertTrue(self.c.get("/api/daily", headers=self.h).get_json()["none"])             # nothing to pick from yet
+        sid = self.make_set()
+        tid = self.topics(sid)[0]["id"]
+        with mock.patch.object(ai, "make_quiz", return_value=[dict(q) for q in QUIZ]):
+            self.c.get(f"/api/topics/{tid}/quiz", headers=self.h)
+        a = self.c.get("/api/daily", headers=self.h).get_json()
+        b = self.c.get("/api/daily", headers=self.h).get_json()
+        self.assertEqual((a["q"], a["topic"], a["set_title"]), (b["q"], "Cell basics", "Cells"))
+        self.assertEqual(len(a["options"]), 4)
+
+    def test_drill_returns_weak_cards_from_every_set(self):
+        self.join()
+        for _ in range(2):
+            sid = self.make_set()
+            tid = self.topics(sid)[0]["id"]
+            self.c.post(f"/api/topics/{tid}/cards/add", headers=self.h, json={"front": f"Q{sid}?", "back": "A."})
+        d = self.c.get("/api/drill", headers=self.h).get_json()
+        self.assertEqual((d["weak"], len(d["cards"])), (2, 2))
+        self.assertEqual({c["set_title"] for c in d["cards"]}, {"Cells"})
+
+    def test_bulk_import_understands_tabs_pipes_semicolons_and_skips_duplicates(self):
+        self.join()
+        sid = self.make_set()
+        tid = self.topics(sid)[0]["id"]
+        text = chr(10).join(["What is a cell?" + chr(9) + "The unit of life", "What is DNA? | Genes", "What is RNA?;A copy of genes", "no separator here", "What is a cell?" + chr(9) + "dup"])
+        r = self.c.post(f"/api/topics/{tid}/cards/bulk", headers=self.h, json={"text": text}).get_json()
+        self.assertEqual((r["added"], r["skipped"]), (3, 2))
+        self.assertEqual(self.c.post(f"/api/topics/{tid}/cards/bulk", headers=self.h, json={"text": "nothing useful"}).status_code, 400)
+
+    def test_rewrite_is_plus_needs_notes_and_valid_mode(self):
+        sid = self.make_set()
+        tid = self.topics(sid)[0]["id"]
+        self.join()
+        self.assertEqual(self.c.post(f"/api/topics/{tid}/rewrite", headers=self.h, json={"mode": "simpler"}).status_code, 402)
+        self.join(plan="plus")
+        self.assertEqual(self.c.post(f"/api/topics/{tid}/rewrite", headers=self.h, json={"mode": "banana"}).status_code, 400)
+        self.assertEqual(self.c.post(f"/api/topics/{tid}/rewrite", headers=self.h, json={"mode": "simpler"}).status_code, 400)   # no notes yet
+        server.db.run(server.update(server.db.topics).where(server.db.topics.c.id == tid).values(notes="## Cells" + chr(10) + "The basic unit."))
+        with mock.patch.object(ai, "rewrite_notes", return_value="Simple cells.") as made:
+            r = self.c.post(f"/api/topics/{tid}/rewrite", headers=self.h, json={"mode": "translate", "lang": "Arabic"}).get_json()
+        self.assertEqual((r["text"], r["lang"], made.call_args.args[2:]), ("Simple cells.", "Arabic", ("translate", "Arabic")))
+
+
 class Reading(unittest.TestCase):
     def test_text_and_unknown_files(self):
         kind, text = ingest.read_file("notes.txt", ("Photosynthesis uses light. " * 5).encode())

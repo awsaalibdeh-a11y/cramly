@@ -26,7 +26,9 @@ function moreTools(set) {
       ${card(`#/set/${id}/exam`, "⏱️", "Exam builder", "Timed, your topics", "premium", "var(--peach)")}
       ${card(`#/set/${id}/glossary`, "📖", "Glossary", "Every key term", "premium", "var(--lilac-2)")}
       ${card(`#/set/${id}/mistakes`, "📓", "Mistake notebook", "Retry what you missed", "premium", "var(--rose-bg)")}
-      ${card(`#/set/${id}/print`, "🖨️", "Print flashcards", "Cut-out cards", "premium", "var(--sky-bg)")}
+      ${card(`#/set/${id}/type`, "⌨️", "Typing practice", "Recall, do not flip", "premium", "var(--sky-bg)")}
+      ${card(`#/drill`, "🎯", "Smart drill", "Your weakest cards", "premium", "var(--peach)")}
+      ${card(`#/set/${id}/print`, "🖨️", "Print flashcards", "Cut-out cards", "premium", "var(--butter)")}
       ${card(`#/quickcards`, "🃏", "Quick cards", "Any text to flashcards", "premium", "var(--mint-bg)")}
       ${card(`#/summarize`, "📝", "Summariser", "Paste, get the gist", "premium", "var(--butter)")}
       ${card(`#/solve/${id}`, "📸", "Snap and solve", "Photo to answer", "premium", "var(--rose-bg)")}
@@ -34,6 +36,7 @@ function moreTools(set) {
       ${card(`#/set/${id}/mixups`, "🔀", "Mix-ups", "Tell look-alikes apart", "plus", "var(--peach)")}
       ${card(`#/set/${id}/outline`, "✍️", "Essay outline", "Plan any long answer", "plus", "var(--sky-bg)")}
       ${card(`#/set/${id}/guide`, "📚", "Study guide", "Everything in one doc", "plus", "var(--mint-bg)")}
+      ${card(`#/report`, "📊", "Weekly report", "How your week went", "plus", "var(--rose-bg)")}
       <button class="mode" id="share-set" type="button" style="--bg:var(--sky-bg)"><div class="art">🔗</div><div class="txt"><small>Send it to a friend</small><b>Share this set ${planTag("plus")}</b></div></button>
     </div>`;
 }
@@ -48,6 +51,7 @@ function setRoute(sub) {
   if (sub === "map") return mapView();
   if (sub === "cheat") return cheatView();
   if (sub === "exam") return examView();
+  if (sub === "type") return typeView();
   if (sub === "schedule") return scheduleView();
   if (sub === "mistakes") return Promise.resolve(mistakesView());
   if (sub === "print") return printCardsView();
@@ -71,6 +75,8 @@ function globalRoute(p) {
   if (p[0] === "solve") return solveView(+p[1] || 0);
   if (p[0] === "progress") return statsView();
   if (p[0] === "focus") return Promise.resolve(focusView());
+  if (p[0] === "drill") return drillView();
+  if (p[0] === "report") return reportView();
   if (p[0] === "summarize") return summarizeView();
   if (p[0] === "quickcards") return quickCardsView();
   return undefined;
@@ -440,7 +446,7 @@ async function cardEditView(tid) {
   $("#view").innerHTML = `<div class="ce"><div class="home-head"><div><p class="eyebrow">${esc(t.title)}</p><h1>Edit flashcards ✏️</h1><p class="muted"><span id="ce-n">${cards.length}</span> cards. Changes save when you leave a box.</p></div>
       <a class="btn" href="#/set/${set.id}/t/${tid}/cards">Study these</a></div>
     <div class="cfg-card ce-new"><b>Add a card</b><div class="ce-row"><label>Front<textarea id="nf" rows="2" maxlength="500" placeholder="Question or term"></textarea></label><label>Back<textarea id="nb" rows="2" maxlength="800" placeholder="Answer"></textarea></label>
-      <button class="btn primary" id="ce-add" type="button">Add</button></div><button class="btn" id="ce-ai" type="button">${ic("sparkle")} Add 6 more with AI</button> <button class="btn" id="ce-fix" type="button">${ic("sparkle")} Improve weak cards ${planTag("plus")}</button></div>
+      <button class="btn primary" id="ce-add" type="button">Add</button></div><button class="btn" id="ce-import" type="button">📥 Import from text</button> <button class="btn" id="ce-ai" type="button">${ic("sparkle")} Add 6 more with AI</button> <button class="btn" id="ce-fix" type="button">${ic("sparkle")} Improve weak cards ${planTag("plus")}</button></div>
     <div id="ce-list">${cards.map(row).join("") || '<p class="muted">No cards yet. Add one above.</p>'}</div></div>`;
   const count = () => { $("#ce-n").textContent = $$(".ce-row[data-id]").length; };
   const wire = (el) => {
@@ -466,6 +472,7 @@ async function cardEditView(tid) {
       $("#nf").value = ""; $("#nb").value = ""; addRows([card]); $("#nf").focus();
     } catch (e) { toast(e.message, true); }
   });
+  $("#ce-import").addEventListener("click", () => importCardsSheet(tid, () => cardEditView(tid)));
   $("#ce-fix").addEventListener("click", async (ev) => {
     const b = ev.currentTarget; b.disabled = true;
     try {

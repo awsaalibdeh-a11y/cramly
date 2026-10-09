@@ -191,6 +191,8 @@ function shell({ tab = "", set = null, crumbs = [], tutor = false, topicId = 0 }
       <a data-need="premium" href="#/progress" class="${on("progress")}">${ic("chart")}Progress</a>
       <a data-need="premium" href="#/summarize" class="${on("summarize")}">${ic("sheet")}Summariser</a>
       <a data-need="premium" href="#/quickcards" class="${on("quickcards")}">${ic("cards")}Quick cards</a>
+      <a data-need="premium" href="#/drill" class="${on("drill")}">${ic("flame")}Smart drill</a>
+      <a data-need="plus" href="#/report" class="${on("report")}">${ic("chart")}Weekly report</a>
       <a href="#/focus" class="${on("focus")}">${ic("timer")}Focus room</a>
     </nav>
     ${set ? `
@@ -212,6 +214,7 @@ function shell({ tab = "", set = null, crumbs = [], tutor = false, topicId = 0 }
       <a data-need="premium" href="#/set/${sid}/exam" class="${on("exam")}">${ic("timer")}Exam builder</a>
       <a data-need="premium" href="#/set/${sid}/cheat" class="${on("cheat")}">${ic("sheet")}Cheat sheet</a>
       <a data-need="premium" href="#/set/${sid}/glossary" class="${on("glossary")}">${ic("book")}Glossary</a>
+      <a data-need="premium" href="#/set/${sid}/type" class="${on("type")}">${ic("edit")}Typing practice</a>
       <a data-need="premium" href="#/set/${sid}/mistakes" class="${on("mistakes")}">${ic("book")}Mistake notebook</a>
       <a data-need="premium" href="#/set/${sid}/print" class="${on("print")}">${ic("print")}Print flashcards</a>
     </nav></details>
@@ -479,6 +482,7 @@ async function homeView() {
     <div class="home-head"><div><p class="eyebrow">${new Date().toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}</p>
       <h1>${hello()}${me.name ? `, ${esc(me.name)}` : ""} 👋</h1></div>
       <a class="btn primary big" href="#/new">＋ New study set</a></div>
+    ${quickActions()}
     <div class="home-extra" id="home-extra"></div>
     ${sets.length ? dashboard(sets) : ""}
     ${toolsStrip()}
@@ -797,9 +801,10 @@ function quizSession({ title, questions, backHref, onDone, crumbs, set, topicId 
     view.innerHTML = `<div class="session"><div class="result"><div class="ring" style="--p:${p};--c:${good ? "var(--mint)" : p >= 50 ? "var(--sun)" : "var(--rose)"}">${p}%</div>
       <h2>${good ? "You've got this! 🎉" : p >= 50 ? "Getting there" : "Let's go over it again"}</h2><p>${score} of ${questions.length} right. ${good ? "That's enough to master the topic." : "Score 80% to master the topic: read it again or ask the tutor, then retry."}</p>
       ${log.length ? `<div class="review-list">${log.map(({ q, k }) => `<div class="rv bad" dir="auto"><b>${esc(q.q)}</b><small>Your answer: ${esc(k >= 0 ? q.options[k] : "No answer")}</small><small>✔ ${esc(q.options[q.answer])}: ${esc(q.why)}</small></div>`).join("")}</div>` : ""}
-      <div style="display:flex;gap:.6rem;flex-wrap:wrap;justify-content:center">${log.length ? '<button class="btn primary" id="retry">Retry the ones I missed</button>' : ""}<a class="btn ${log.length ? "" : "primary"}" href="${backHref}">Done</a></div></div></div>`;
+      <div style="display:flex;gap:.6rem;flex-wrap:wrap;justify-content:center">${log.length ? '<button class="btn primary" id="retry">Retry the ones I missed</button>' : ""}<button class="btn" id="share-score">📤 Share my score</button><a class="btn ${log.length ? "" : "primary"}" href="${backHref}">Done</a></div></div></div>`;
     if (good) confetti();
     try { saveMistakes(set?.id, log); } catch { /* the notebook is optional */ }
+    $("#share-score")?.addEventListener("click", () => shareScoreCard({ title: set?.title || title, p, score, total: questions.length }));
     $("#retry")?.addEventListener("click", () => quizSession({ title, questions: log.map((l) => l.q), backHref, onDone: null, crumbs, set, topicId, tab }));
     if (onDone) await onDone(score, questions.length, log);
   };

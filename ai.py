@@ -512,3 +512,19 @@ a crisp answer on the back (at most 2 sentences), and a `tip` (a memory hook, pi
 fact; do not add facts that are not in the material. {LANG}"""
     listing = "\n".join(f"[{c['id']}] FRONT: {c['front']} | BACK: {c['back']}" for c in cards)
     return ask_json(system, f"{_topic_prompt(topic, context)}\n\nCARDS TO IMPROVE:\n{listing}", IMPROVE_SCHEMA, "improve", effort="minimal")["cards"]
+
+
+# ---------- rewrite the notes: simpler, shorter, deeper or translated (Premium Plus) ----------
+REWRITE_SCHEMA = _obj({"text": S})
+REWRITE_MODES = {
+    "simpler": "Rewrite the notes in much simpler words for someone new to the topic: short sentences, everyday comparisons, define every term the first time.",
+    "shorter": "Rewrite the notes as a tight revision version: about a third of the length, bullets for facts, **bold** key terms, nothing that is not essential.",
+    "deeper": "Rewrite the notes at a more advanced level: add the reasoning behind each fact, how the parts connect, and one worked example, using only what the material supports.",
+    "translate": "Translate the notes faithfully into {lang}. Keep the structure, headings, bullets and formulas. Keep technical terms recognisable (add the original in brackets the first time).",
+}
+
+
+def rewrite_notes(topic, notes, mode, lang="English"):
+    system = f"""You rewrite a student's study notes. {REWRITE_MODES[mode].format(lang=lang)} Output markdown with the same kind of headings
+and bullets the notes use. Never invent facts that are not in the notes."""
+    return ask_json(system, f"TOPIC: {topic['title']}\n\nNOTES:\n{notes[:12000]}", REWRITE_SCHEMA, "rewrite", effort="minimal")["text"].strip()
