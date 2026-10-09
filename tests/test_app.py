@@ -4,6 +4,7 @@ import datetime as dt
 import io
 import json
 import os
+import time
 import sys
 import tempfile
 import unittest
@@ -470,6 +471,73 @@ class Access(Base):
         r = self.c.post("/api/account", json={})
         self.assertEqual(r.status_code, 429)
         self.assertTrue(r.get_json()["locked"])
+
+
+class OwnerSwitches(Base):
+    """Ban, time-out, messages, the kill switch and personal links."""
+    uid, admin, make_link = Access.uid, Access.admin, Access.make_link
+
+    def me(self):
+        return self.c.get("/api/me", headers=self.h).get_json()
+
+    def test_ban_blocks_everything_but_explains_itself(self):
+        uid = self.uid()
+        self.admin("post", f"/api/admin/users/{uid}/ban", json={"banned": True, "reason": "Spamming"})
+        r = self.c.get("/api/sets", headers=self.h)
+        self.assertEqual((r.status_code, r.get_json()["banned"], r.get_json()["reason"]), (403, True, "Spamming"))
+        self.assertTrue(self.me()["banned"])                                           # /api/me still answers, so the page can explain
+        self.admin("post", f"/api/admin/users/{uid}/ban", json={"banned": False})
+        self.assertEqual(self.c.get("/api/sets", headers=self.h).status_code, 200)
+
+    def test_timeout_ends_by_itself(self):
+        uid = self.uid()
+        self.admin("post", f"/api/admin/users/{uid}/timeout", json={"minutes": 30, "reason": "Cool off"})
+        r = self.c.get("/api/sets", headers=self.h)
+        self.assertEqual((r.status_code, r.get_json()["timeout"]), (403, True))
+        self.assertGreater(self.me()["timeout_until"], time.time())
+        server.db.run(server.update(server.db.users).where(server.db.users.c.id == uid).values(timeout_until=time.time() - 5))
+        self.assertEqual(self.c.get("/api/sets", headers=self.h).status_code, 200)
+        self.assertEqual(self.me()["timeout_until"], 0)
+
+    def test_messages_arrive_once_and_broadcast_reaches_everyone(self):
+        uid = self.uid()
+        self.assertEqual(self.admin("post", f"/api/admin/users/{uid}/message", json={"body": "  "}).status_code, 400)
+        self.admin("post", f"/api/admin/users/{uid}/message", json={"body": "Hi Aws, thanks for testing!"})
+        self.assertEqual([m["body"] for m in self.me()["inbox"]], ["Hi Aws, thanks for testing!"])
+        self.c.post("/api/messages/read", headers=self.h)
+        self.assertEqual(self.me()["inbox"], [])
+        sent = self.admin("post", "/api/admin/broadcast", json={"body": "New feature!"}).get_json()["sent"]
+        self.assertGreaterEqual(sent, 1)
+        self.assertEqual([m["body"] for m in self.me()["inbox"]], ["New feature!"])
+
+    def test_kill_switch_stops_the_app_but_not_the_owner(self):
+        self.admin("post", "/api/admin/settings", json={"maintenance": True, "message": "Back at 6pm"})
+        try:
+            r = self.c.get("/api/sets", headers=self.h)
+            self.assertEqual((r.status_code, r.get_json()["maintenance"], r.get_json()["error"]), (503, True, "Back at 6pm"))
+            self.assertTrue(self.c.get("/api/status").get_json()["maintenance"])
+            self.assertEqual(self.c.post("/api/account", json={}).status_code, 503)    # no new accounts either
+            self.assertTrue(self.me()["maintenance"])
+            self.assertEqual(self.admin("get", "/api/admin/overview").status_code, 200)
+        finally:
+            self.admin("post", "/api/admin/settings", json={"maintenance": False})
+        self.assertEqual(self.c.get("/api/sets", headers=self.h).status_code, 200)
+
+    def test_personal_link_carries_the_note(self):
+        code, _ = self.make_link(label="Sara", message="Hey Sara, this one is just for you!")
+        d = self.c.post("/api/join", json={"code": code}).get_json()
+        self.assertEqual((d["message"], d["for_name"]), ("Hey Sara, this one is just for you!", "Sara"))
+
+    def test_owner_can_grant_reset_and_delete(self):
+        uid = self.uid()
+        self.admin("post", f"/api/admin/users/{uid}/premium", json={"on": True, "days": 7})
+        self.assertTrue(self.me()["premium"])
+        self.admin("post", f"/api/admin/users/{uid}/premium", json={"on": False})
+        self.assertFalse(self.me()["premium"])
+        users = self.admin("get", "/api/admin/users").get_json()["users"]
+        self.assertIn(uid, [u["id"] for u in users])
+        self.assertEqual(self.admin("delete", f"/api/admin/users/{uid}").status_code, 200)
+        self.assertEqual(self.c.get("/api/me", headers=self.h).status_code, 401)
 
 
 class Reading(unittest.TestCase):

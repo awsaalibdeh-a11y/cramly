@@ -70,6 +70,7 @@ async function api(path, { method, body, form, signal } = {}) {
   const d = await r.json().catch(() => ({}));
   if (r.status === 401 && key) { signOut(); throw new Error("Signed out."); }
   if (r.status === 402 && d.locked) { showPaywall(d); throw new Error(d.error || "Free minute used."); }
+  if (gateScreen(r.status, d)) throw new Error(d.error || "Blocked.");
   if (!r.ok) throw new Error(d.error || "Something went wrong.");
   return d;
 }
@@ -78,7 +79,7 @@ async function stream(path, { body, form, signal }, onEvent) {
   let payload = form;
   if (!form) { headers["Content-Type"] = "application/json"; payload = JSON.stringify(body); }
   const r = await fetch(path, { method: "POST", headers, body: payload, signal });
-  if (!r.ok) { const d = await r.json().catch(() => ({})); if (r.status === 402 && d.locked) showPaywall(d); throw new Error(d.error || "Something went wrong."); }
+  if (!r.ok) { const d = await r.json().catch(() => ({})); if (r.status === 402 && d.locked) showPaywall(d); else gateScreen(r.status, d); throw new Error(d.error || "Something went wrong."); }
   const reader = r.body.getReader(), dec = new TextDecoder();
   let buf = "";
   for (;;) {
@@ -1025,6 +1026,7 @@ $("#have-code").addEventListener("click", () => sheet(`<h3>Join with a code</h3>
 }));
 
 async function boot() {
+  checkStatus();
   if (window.JOIN) { const code = window.JOIN; window.JOIN = ""; await handleJoinLink(code); }
   $("#welcome").hidden = !!key;
   if (!key) { $("#tabbar").hidden = true; return; }

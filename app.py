@@ -93,12 +93,32 @@ def touch(user):
 LOCKED = {"error": "Your free minute is up.", "locked": True}
 
 
+def lockout(user):
+    """The owner's switches: a banned account, or one in a time-out, can't use anything until it's lifted."""
+    if user["banned"]:
+        return jsonify(error="This account has been blocked.", banned=True, reason=user["ban_reason"] or "", contact=CONTACT), 403
+    if (user["timeout_until"] or 0) > time.time():
+        return jsonify(error="This account is on a break.", timeout=True, until=user["timeout_until"], reason=user["ban_reason"] or "", contact=CONTACT), 403
+    return None
+
+
+@app.before_request
+def kill_switch():
+    """Owner switch: when the app is switched off every API call except status and the owner's tools gets a 503."""
+    path = request.path
+    if path.startswith("/api/") and not path.startswith(("/api/admin", "/api/status", "/api/me", "/api/beat")) and db.setting("maintenance") == "1":
+        return jsonify(error=db.setting("maintenance_msg") or "Cramly is switched off for a bit. Back soon.", maintenance=True), 503
+    return None
+
+
 def _wrap(fn, gated):
     def wrapped(*a, **k):
         user = me()
         if not user:
             return jsonify(error="Not signed in."), 401
         user["is_premium"] = is_premium(user)
+        if gated and (blocked := lockout(user)):
+            return blocked
         if not user["is_premium"]:
             touch(user)
             if gated and (trial_left(user) <= 0 or (user["trial_calls"] or 0) > TRIAL_CALLS):
@@ -243,8 +263,13 @@ def access_view(user):
     prem = user["is_premium"]
     left = trial_left(user)
     locked = (not prem) and (left <= 0 or (user["trial_calls"] or 0) > TRIAL_CALLS)
+    inbox = db.many(select(db.messages).where(db.messages.c.user_id == user["id"], db.messages.c.seen == 0).order_by(db.messages.c.id))
     return {"premium": prem, "premium_until": user["premium_until"] if prem else 0, "trial_left": 0 if prem else int(left),
-            "trial_total": TRIAL_SECONDS, "locked": locked, "contact": CONTACT}
+            "trial_total": TRIAL_SECONDS, "locked": locked, "contact": CONTACT,
+            "banned": bool(user["banned"]), "ban_reason": user["ban_reason"] or "",
+            "timeout_until": user["timeout_until"] if (user["timeout_until"] or 0) > time.time() else 0,
+            "maintenance": db.setting("maintenance") == "1", "maintenance_msg": db.setting("maintenance_msg"),
+            "inbox": [{"id": m["id"], "body": m["body"], "created": m["created"]} for m in inbox]}
 
 
 @app.get("/api/me")
@@ -252,6 +277,19 @@ def access_view(user):
 def get_me(user):
     return jsonify(name=user["name"], streak=streak(user), due=_due_count(user["id"]), today=local_today().isoformat(),
                    ai=bool(os.environ.get("OPENAI_API_KEY")), **access_view(user))
+
+
+@app.get("/api/status")
+def status():
+    """Public: is the app switched off? (the page asks before it shows anything)"""
+    return jsonify(maintenance=db.setting("maintenance") == "1", message=db.setting("maintenance_msg"))
+
+
+@app.post("/api/messages/read")
+@need_user_open
+def messages_read(user):
+    db.run(update(db.messages).where(db.messages.c.user_id == user["id"]).values(seen=1))
+    return jsonify(ok=True)
 
 
 @app.post("/api/beat")
@@ -284,7 +322,7 @@ def join():
     until = time.time() + inv["days"] * 86400 if inv["days"] else 0
     db.run(update(db.users).where(db.users.c.id == uid).values(premium=1, premium_until=until, invite_id=inv["id"]))
     db.run(update(db.invites).where(db.invites.c.id == inv["id"]).values(uses=inv["uses"] + 1))
-    return jsonify(ok=True, premium=True, key=new_key)
+    return jsonify(ok=True, premium=True, key=new_key, message=inv["message"] or "", for_name=inv["label"] or "")
 
 
 @app.patch("/api/me")

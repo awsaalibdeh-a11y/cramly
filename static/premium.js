@@ -38,7 +38,11 @@ function accessChip() {
 }
 function wireAccess() {
   $("#acc-chip")?.addEventListener("click", () => { if (!S.me?.premium) upgradeSheet(); });
-  if (S.me?.locked && !S.me?.premium) showPaywall();
+  if (S.me?.banned) showGate("banned", S.me);
+  else if (S.me?.timeout_until) showGate("timeout", S.me);
+  else if (S.me?.maintenance) showGate("maintenance", { message: S.me.maintenance_msg });
+  else if (S.me?.locked && !S.me?.premium) showPaywall();
+  showInbox();
   startBeat();
 }
 
@@ -52,13 +56,17 @@ function paintLeft() {
   el.closest(".chip-btn")?.classList.toggle("hot", left <= 15);
 }
 async function beat() {
-  if (!key || S.me?.premium || document.hidden || $("#paywall")) return;
+  if (!key || document.hidden || $("#paywall") || $("#gate")) return;
   try {
     const r = await fetch("/api/beat", { method: "POST", headers: baseHeaders() });
     if (!r.ok) return;
     const d = await r.json();
     S.me = { ...S.me, ...d };
     paintLeft();
+    if (d.banned) return showGate("banned", d);
+    if (d.timeout_until) return showGate("timeout", d);
+    if (d.maintenance) return showGate("maintenance", { message: d.maintenance_msg });
+    showInbox();
     if (d.locked && !d.premium) showPaywall(d);
   } catch { /* offline: the next beat will catch up */ }
 }
@@ -127,7 +135,7 @@ async function redeemJoin(code, { quiet = true } = {}) {
     const d = await api("/api/join", { body: { code } });
     if (d.key) { key = d.key; ls.set("cramly.key", key); }
     S.me = { ...S.me, premium: true, locked: false };
-    return { ok: true, fresh: !!d.key };
+    return { ok: true, fresh: !!d.key, message: d.message || "", forName: d.for_name || "" };
   } catch (e) {
     if (!quiet) toast(e.message, true);
     redeemJoin.error = e.message;
@@ -141,15 +149,16 @@ async function handleJoinLink(code) {
     sheet(`<h3>That link does not work</h3><p class="muted">${esc(redeemJoin.error || "It is not valid any more.")}</p><div class="sheet-actions"><button class="btn primary" data-close>OK</button></div>`);
     return;
   }
-  giftSheet();
+  giftSheet(r);
   if (r.fresh) $("#sheet").addEventListener("close", async () => {
     const name = await askText({ title: "What should I call you?", label: "Your name", ok: "Continue" });
     if (name?.trim()) { await api("/api/me", { method: "PATCH", body: { name } }).catch(() => {}); S.me = { ...S.me, name }; route(); }
   }, { once: true });
 }
-function giftSheet() {
+function giftSheet(r = {}) {
+  const note = r.message ? `<div class="gift-note" dir="auto"><small>💌 A note for ${esc(r.forName || "you")}</small>${esc(r.message)}</div>` : "";
   sheet(`<div class="gift"><div class="gift-ico">🎁</div><div class="price"><s>$2.99</s><b>FREE</b></div>
-    <h3>Cramly Premium is a gift for you</h3>
+    <h3>Cramly Premium is a gift for you</h3>${note}
     <p>Premium normally costs <b>$2.99</b>. You are getting it <b>completely free</b>, as a gift from Awsaa. Nothing to pay, now or ever.</p>
     <button class="btn primary big" data-close type="button">Start studying 🎉</button></div>`);
   try { confetti(); } catch { /* decoration only */ }
@@ -179,3 +188,62 @@ function wireAccountBlock() {
 /* ---------- tutor styles ---------- */
 const TUTOR_STYLES = [["", "Friendly tutor"], ["eli5", "Explain like I am 10"], ["coach", "Exam coach"], ["strict", "Strict Socratic"], ["buddy", "Funny buddy"]];
 const tutorStyleOptions = () => TUTOR_STYLES.map(([v, l]) => `<option value="${v}" ${ls.get("cramly.style", "") === v ? "selected" : ""}>${l}</option>`).join("");
+
+/* ---------- the owner's switches: banned, on a break, switched off ---------- */
+function gateScreen(status, d) {
+  if (status === 403 && d.banned) { showGate("banned", d); return true; }
+  if (status === 403 && d.timeout) { showGate("timeout", d); return true; }
+  if (status === 503 && d.maintenance) { showGate("maintenance", d); return true; }
+  return false;
+}
+function showGate(kind, d = {}) {
+  if ($("#paywall")) $("#paywall").remove();
+  if ($("#gate")) return;
+  window.leaveView?.();
+  try { stopCall?.(); } catch { /* no call running */ }
+  closeSheet();
+  const reason = d.reason || d.ban_reason ? `<p class="gate-reason">${esc(d.reason || d.ban_reason)}</p>` : "";
+  const mail = `<a class="btn primary big" href="mailto:${esc(contact())}?subject=${encodeURIComponent("About my Cramly account")}">${ic("mail")} Message Awsaa</a>`;
+  const body = {
+    banned: `<div class="gate-ico">🚫</div><h1>This account has been blocked</h1><p>You cannot use Cramly with this account right now.</p>${reason}<p class="muted">If you think this is a mistake, message ${esc(contact())}.</p>${mail}`,
+    timeout: `<div class="gate-ico">⏸️</div><h1>You are on a short break</h1><p>This account is paused for a bit. It opens again in:</p><div class="gate-clock" id="gate-clock"></div>${reason}<p class="muted">Questions? Message ${esc(contact())}.</p>`,
+    maintenance: `<div class="gate-ico">🛠️</div><h1>Cramly is switched off for a bit</h1><p>${esc(d.message || d.error || d.maintenance_msg || "It will be back soon.")}</p><button class="btn primary big" id="gate-retry" type="button">Check again</button><p class="muted small">This page checks by itself every 15 seconds.</p>`,
+  }[kind];
+  const el = document.createElement("div");
+  el.id = "gate"; el.className = "gate-wrap"; el.setAttribute("role", "alertdialog"); el.setAttribute("aria-modal", "true");
+  el.innerHTML = `<div class="pw-card gate">${body}</div>`;
+  document.body.append(el);
+  document.documentElement.classList.add("pw-open");
+  ["#app", "#welcome", "#tabbar"].forEach((s) => { const n = $(s); if (n) n.inert = true; });
+  if (kind === "timeout") {
+    const until = d.until || d.timeout_until, tick = () => {
+      const s = Math.max(0, Math.round(until - Date.now() / 1000));
+      $("#gate-clock").textContent = s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+      if (!s) location.reload();
+    };
+    tick(); setInterval(tick, 1000);
+  }
+  if (kind === "maintenance") {
+    const check = async () => { try { const s = await (await fetch("/api/status")).json(); if (!s.maintenance) location.reload(); } catch { /* still off */ } };
+    $("#gate-retry").addEventListener("click", check); setInterval(check, 15000);
+  }
+}
+async function checkStatus() {
+  try { const s = await (await fetch("/api/status")).json(); if (s.maintenance) showGate("maintenance", s); } catch { /* offline */ }
+}
+
+/* ---------- notes from the owner ---------- */
+let inboxOpen = false;
+function showInbox() {
+  const box = S.me?.inbox || [];
+  if (!box.length || inboxOpen || $("#paywall") || $("#gate")) return;
+  inboxOpen = true;
+  sheet(`<div class="note-letter"><div class="gift-ico">💌</div><h3>A message from Awsaa</h3>
+    ${box.map((m) => `<blockquote dir="auto">${esc(m.body)}</blockquote>`).join("")}
+    <button class="btn primary big" data-close type="button">Got it</button></div>`);
+  $("#sheet").addEventListener("close", async () => {
+    inboxOpen = false;
+    S.me.inbox = [];
+    try { await api("/api/messages/read", { body: {} }); } catch { /* shown again next time */ }
+  }, { once: true });
+}

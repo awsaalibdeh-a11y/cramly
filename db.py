@@ -30,6 +30,9 @@ users = Table("users", meta,
     Column("trial_used", Float, default=0),                        # seconds of the free minute already used
     Column("trial_calls", Integer, default=0),                     # AI jobs run during the free minute
     Column("last_seen", Float, default=0),
+    Column("banned", Integer, default=0),                          # owner switch: 1 = locked out
+    Column("ban_reason", Text, default=""),
+    Column("timeout_until", Float, default=0),                     # owner switch: locked out until this time
 )
 invites = Table("invites", meta,
     Column("id", Integer, primary_key=True),
@@ -40,6 +43,20 @@ invites = Table("invites", meta,
     Column("days", Integer, default=0),                            # how long premium lasts once joined (0 = forever)
     Column("revoked", Integer, default=0),
     Column("created", Float),
+    Column("message", Text, default=""),                           # a personal note shown to whoever opens the link
+)
+
+messages = Table("messages", meta,                                   # notes from the owner to one account (or everyone)
+    Column("id", Integer, primary_key=True),
+    Column("user_id", Integer, index=True),
+    Column("body", Text),
+    Column("created", Float),
+    Column("seen", Integer, default=0),
+)
+
+settings = Table("settings", meta,                                   # owner switches, like the kill switch
+    Column("key", String(40), primary_key=True),
+    Column("value", Text, default=""),
 )
 devices = Table("devices", meta,
     Column("id", Integer, primary_key=True),
@@ -112,7 +129,9 @@ def _migrate():
         "topics": [("swipes", "TEXT DEFAULT ''"), ("podcast", "TEXT DEFAULT ''")],
         "sets": [("cheat", "TEXT DEFAULT ''")],
         "users": [("premium", "INTEGER DEFAULT 0"), ("premium_until", "FLOAT DEFAULT 0"), ("invite_id", "INTEGER DEFAULT 0"),
-                  ("trial_used", "FLOAT DEFAULT 0"), ("trial_calls", "INTEGER DEFAULT 0"), ("last_seen", "FLOAT DEFAULT 0")],
+                  ("trial_used", "FLOAT DEFAULT 0"), ("trial_calls", "INTEGER DEFAULT 0"), ("last_seen", "FLOAT DEFAULT 0"),
+                  ("banned", "INTEGER DEFAULT 0"), ("ban_reason", "TEXT DEFAULT ''"), ("timeout_until", "FLOAT DEFAULT 0")],
+        "invites": [("message", "TEXT DEFAULT ''")],
     }
     insp = inspect(engine)
     for table, cols in wanted.items():
@@ -164,3 +183,15 @@ def user_for(key):
 
 __all__ = ["engine", "users", "invites", "devices", "pair_codes", "sets", "materials", "topics", "cards", "activity", "one", "many",
            "run", "new_device", "user_for", "select", "insert", "update", "delete", "func"]
+
+
+def setting(key, default=""):
+    row = one(select(settings).where(settings.c.key == key))
+    return row["value"] if row else default
+
+
+def set_setting(key, value):
+    if one(select(settings).where(settings.c.key == key)):
+        run(update(settings).where(settings.c.key == key).values(value=str(value)))
+    else:
+        run(insert(settings).values(key=key, value=str(value)))
