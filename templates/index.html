@@ -12,8 +12,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script>try { var t = JSON.parse(localStorage.getItem("cramly.theme") || "null"); if (t === "dark" || t === "light") document.documentElement.dataset.theme = t; } catch (e) { /* default */ }</script>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ v }}">
   <script defer src="{{ url_for('static', filename='app.js') }}?v={{ v }}"></script>
+  <script defer src="{{ url_for('static', filename='extras.js') }}?v={{ v }}"></script>
 </head>
 <body>
   <!-- first visit -->
@@ -48,11 +50,11 @@
   </div>
 
   <nav class="tabbar" id="tabbar" hidden>
-    <a href="#/" data-tab="home"><i>🏠</i><span>Home</span></a>
-    <a href="#/calendar" data-tab="calendar"><i>📅</i><span>Plan</span></a>
-    <a href="#/new" data-tab="new" class="plus"><i>＋</i><span>New</span></a>
-    <a href="#/review" data-tab="review"><i>🃏</i><span>Review</span></a>
-    <button type="button" id="tab-tutor" data-tab="tutor"><i>🦉</i><span>Tutor</span></button>
+    <a href="#/" data-tab="home"><i data-ic="home"></i><span>Home</span></a>
+    <a href="#/calendar" data-tab="calendar"><i data-ic="calendar"></i><span>Plan</span></a>
+    <a href="#/new" data-tab="new" class="plus"><i data-ic="plus"></i><span>New</span></a>
+    <a href="#/review" data-tab="review"><i data-ic="cards"></i><span>Review</span></a>
+    <button type="button" id="tab-tutor" data-tab="tutor"><i data-ic="chat"></i><span>Tutor</span></button>
   </nav>
 
   <div class="busy" id="busy" hidden><div class="busy-card"><div class="owl">🦉</div><h3 id="busy-title">Working on it…</h3><p id="busy-line">One moment</p><div class="dots"><i></i><i></i><i></i></div></div></div>

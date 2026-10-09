@@ -180,34 +180,37 @@ function shell({ tab = "", set = null, crumbs = [], tutor = false, topicId = 0 }
   $("#side").innerHTML = `
     <a class="logo" href="#/"><img src="/static/icon-64.png" alt="" width="34" height="34"><b>Cramly</b></a>
     <nav>
-      <a href="#/" class="${on("home")}"><i>🏠</i>Home</a>
-      <a href="#/calendar" class="${on("calendar")}"><i>📅</i>Calendar</a>
-      <a href="#/review" class="${on("review")}"><i>🃏</i>Daily review${due ? `<span class="badge">${due}</span>` : ""}</a>
-      <a href="#/record" class="${on("record")}"><i>🎙️</i>Record lecture</a>
+      <a href="#/" class="${on("home")}">${ic("home")}Home</a>
+      <a href="#/calendar" class="${on("calendar")}">${ic("calendar")}Calendar</a>
+      <a href="#/review" class="${on("review")}">${ic("cards")}Daily review${due ? `<span class="badge">${due}</span>` : ""}</a>
+      <a href="#/record" class="${on("record")}">${ic("mic")}Record lecture</a>
     </nav>
     ${set ? `
     <a class="current" href="#/set/${sid}"><span class="tile" style="--h:${set.hue}">${esc(set.emoji)}</span><b>${esc(set.title)}</b></a>
     <div class="sep">This study set</div>
     <nav>
-      <a href="#/set/${sid}" class="${on("set")}"><i>🗺️</i>Study plan</a>
-      <button class="nav" data-tutor="ask"><i>💬</i>Chat with tutor</button>
-      <button class="nav" data-tutor="guided"><i>🎓</i>Tutor me</button>
-      <a href="#/set/${sid}/cards" class="${on("cards")}"><i>🃏</i>Flashcards</a>
-      <a href="#/set/${sid}/test" class="${on("test")}"><i>📝</i>Practice test</a>
-      <a href="#/set/${sid}/match" class="${on("match")}"><i>🧩</i>Match game</a>
-      <a href="#/set/${sid}/add" class="${on("add")}"><i>⬆️</i>Add material</a>
+      <a href="#/set/${sid}" class="${on("set")}">${ic("map")}Study plan</a>
+      <button class="nav" data-tutor="ask">${ic("chat")}Chat with tutor</button>
+      <button class="nav" data-tutor="guided">${ic("cap")}Tutor me</button>
+      <a href="#/set/${sid}/cards" class="${on("cards")}">${ic("cards")}Flashcards</a>
+      <a href="#/set/${sid}/swipe" class="${on("swipe")}">${ic("swipe")}Swipe game<span class="badge new">new</span></a>
+      <a href="#/set/${sid}/test" class="${on("test")}">${ic("test")}Practice test</a>
+      <a href="#/set/${sid}/match" class="${on("match")}">${ic("puzzle")}Match game</a>
+      <a href="#/set/${sid}/add" class="${on("add")}">${ic("upload")}Add material</a>
     </nav>
     <div class="sep">Materials</div>
-    <div class="mats">${(S.cur?.materials || []).map((m) => `<span title="${esc(m.name)}">📄 ${esc(m.name)}</span>`).join("") || '<span>Nothing yet</span>'}</div>` : ""}
+    <div class="mats">${(S.cur?.materials || []).map((m) => `<span title="${esc(m.name)}">${esc(m.name)}</span>`).join("") || "<span>Nothing yet</span>"}</div>` : ""}
     <div class="grow"></div>
+    ${auraCard()}
     <nav>
-      <a href="#/new" class="${on("new")}"><i>＋</i>New study set</a>
-      <button class="nav" id="open-settings"><i>⚙️</i>Settings</button>
+      <a href="#/new" class="${on("new")}">${ic("plus")}New study set</a>
+      <button class="nav" id="open-settings">${ic("gear")}Settings</button>
     </nav>`;
   $("#top").innerHTML = `
     <div class="crumbs">${crumbs.map((c, i) => (c.href ? `<a href="${c.href}">${esc(c.text)}</a>` : `<span>${esc(c.text)}</span>`) + (i < crumbs.length - 1 ? "<span>›</span>" : "")).join("")}</div>
-    <div class="right"><span class="streak ${S.me?.streak ? "" : "cold"}" title="Days in a row you studied">🔥 ${S.me?.streak || 0}</span>
-      ${set ? '<button class="btn small" id="top-tutor">🦉 Tutor</button>' : ""}</div>`;
+    <div class="right"><button class="chip-btn" id="focus-chip" title="Focus timer"></button>${auraChip()}
+      <span class="chip-btn streak ${S.me?.streak ? "" : "cold"}" title="Days in a row you studied">${ic("flame")}<b>${S.me?.streak || 0}</b></span>
+      ${set ? `<button class="chip-btn tutor-btn" id="top-tutor">${ic("chat")}<span class="lbl">Tutor</span></button>` : ""}</div>`;
   $$("#tabbar a").forEach((a) => a.classList.toggle("on", a.dataset.tab === tab || (tab === "set" && a.dataset.tab === "home")));
   $("#tabbar").hidden = false;
   applyTutorLayout(tutor && !!set);
@@ -218,6 +221,7 @@ function wireShell() {
   $$("[data-tutor]").forEach((b) => b.addEventListener("click", () => openTutor({ mode: b.dataset.tutor, topic: S.ctx?.topicId || 0 })));
   $("#open-settings")?.addEventListener("click", settingsSheet);
   $("#top-tutor")?.addEventListener("click", () => toggleTutor());
+  afterShell();
 }
 const wide = () => matchMedia("(min-width: 1240px)").matches;
 function applyTutorLayout(show) {
@@ -438,11 +442,14 @@ async function route() {
       if (sub === "cards") return cardsView({ set: true });
       if (sub === "test") return testView();
       if (sub === "match") return matchView();
+      if (sub === "swipe") return swipeView();
       if (sub === "t" && p[3]) {
         const tid = +p[3], kind = p[4];
         if (kind === "read") return readView(tid);
         if (kind === "cards") return cardsView({ topicId: tid });
         if (kind === "quiz") return quizView(tid);
+        if (kind === "swipe") return swipeView({ topicId: tid });
+        if (kind === "explain") return explainView(tid);
       }
       return go("#/");
     }
@@ -486,7 +493,7 @@ async function homeView() {
     <div class="home-head"><div><p class="eyebrow">${new Date().toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}</p>
       <h1>${hello()}${me.name ? `, ${esc(me.name)}` : ""} 👋</h1></div>
       <a class="btn primary big" href="#/new">＋ New study set</a></div>
-    ${due ? `<a class="review-card" href="#/review" style="text-decoration:none;color:inherit"><span class="ico">🃏</span><div><b>${due} flashcard${due > 1 ? "s" : ""} ready to review</b><p>Reviewing now keeps them in your memory for longer.</p></div><span class="btn dark">Start review →</span></a>` : ""}
+    ${sets.length ? dashboard(sets) : ""}
     ${sets.length ? `<h2 class="sec">Your study sets <small>${sets.length}</small></h2><div class="sets">${sets.map(card).join("")}
       <a class="set new" href="#/new"><span>＋</span>Add a study set</a></div>`
     : `<div class="empty-hero"><div class="owl">🦉</div><h2>Let's make your first study set</h2>
@@ -585,17 +592,19 @@ async function setView() {
       <div class="meta"><span class="pill">📖 ${n} topics</span><span class="pill">✅ ${set.covered} covered</span><span class="pill">🏆 ${set.mastered} mastered</span>
         <button class="pill" id="exam-pill" style="cursor:pointer">${set.exam ? `📅 Exam ${fmtDay(set.exam)}` : "📅 Set exam date"}</button></div>
       <div class="bar green meter" style="margin-top:.8rem"><i style="width:${pct(set.mastered, n)}%"></i></div></div></div>
-    <h2 class="sec" style="margin-top:0">Recommended from your study plan <small>${set.due ? `${set.due} flashcards due` : ""}</small></h2>
-    <div class="plan-tabs" id="tabs">${topics.map((t) => `<button class="ptab ${t.status >= 2 ? "done" : t.status ? "half" : ""}" data-t="${t.id}"><em>${String(t.idx + 1).padStart(2, "0")}</em><span>${esc(t.title)}</span></button>`).join("")}</div>
+    ${nextStepCard()}
+    <h2 class="sec" style="margin-top:1.4rem">Recommended from your study plan <small>${set.due ? `${set.due} flashcards due` : ""}</small></h2>
+    <div class="plan-tabs" id="tabs">${topics.map((t) => `<button class="ptab ${t.status >= 2 ? "done" : t.status ? "half" : ""}" data-t="${t.id}" title="${esc(t.title)}"><em>${String(t.idx + 1).padStart(2, "0")}</em><span>${esc(t.title)}</span></button>`).join("")}</div>
     <div id="topic"></div>
     ${planHtml}
     <h2 class="sec">Practice this whole set</h2>
-    <div class="modes"><a class="mode" style="--bg:#cdf5d6" href="#/set/${set.id}/cards"><div class="art">🃏</div><div class="txt"><small>${set.due ? `${set.due} due` : "Spaced repetition"}</small><b>Flashcards</b></div></a>
-      <a class="mode" style="--bg:#ffd6e1" href="#/set/${set.id}/test"><div class="art">🎯</div><div class="txt"><small>Mixed questions</small><b>Practice test</b></div></a>
-      <a class="mode" style="--bg:#d3ecff" href="#/set/${set.id}/match"><div class="art">🧩</div><div class="txt"><small>Quick game</small><b>Match game</b></div></a></div>
+    <div class="modes four"><a class="mode" style="--bg:var(--mint-bg)" href="#/set/${set.id}/cards"><div class="art">🃏</div><div class="txt"><small>${set.due ? `${set.due} due` : "Spaced repetition"}</small><b>Flashcards</b></div></a>
+      <a class="mode" style="--bg:var(--rose-bg)" href="#/set/${set.id}/swipe"><div class="art">🕹️</div><div class="txt"><small>Earn aura</small><b>Swipe game</b></div></a>
+      <a class="mode" style="--bg:var(--lilac-2)" href="#/set/${set.id}/test"><div class="art">🎯</div><div class="txt"><small>Mixed questions</small><b>Practice test</b></div></a>
+      <a class="mode" style="--bg:var(--sky-bg)" href="#/set/${set.id}/match"><div class="art">🧩</div><div class="txt"><small>Quick game</small><b>Match game</b></div></a></div>
     <h2 class="sec">All topics</h2>
     <div class="alltopics">${topics.map((t) => `<button class="trow ${t.status >= 2 ? "done" : t.status ? "half" : ""}" data-t="${t.id}"><span class="n">${t.status >= 2 ? "✓" : t.idx + 1}</span><b>${esc(t.title)}</b><small>${statusWord(t)}${t.quiz_best >= 0 ? ` · quiz ${t.quiz_best}%` : ""}</small></button>`).join("")}</div>
-    <div style="margin-top:2rem;display:flex;gap:.6rem;flex-wrap:wrap"><a class="btn" href="#/set/${set.id}/add">⬆️ Add material</a><button class="btn danger" id="del-set">🗑️ Delete this set</button></div></div>`;
+    <div style="margin-top:2rem;display:flex;gap:.6rem;flex-wrap:wrap"><a class="btn" href="#/set/${set.id}/add">${ic("upload")} Add material</a><button class="btn" id="export">${ic("download")} Export flashcards (CSV)</button><button class="btn danger" id="del-set">🗑️ Delete this set</button></div></div>`;
   const pickTopic = (id, scroll) => { setActive(id); paintTopic(); $$(".ptab").forEach((b) => b.classList.toggle("on", +b.dataset.t === id)); if (scroll) $("#view").scrollTo({ top: 0, behavior: "smooth" }); $(".ptab.on")?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" }); };
   $$(".ptab").forEach((b) => b.addEventListener("click", () => pickTopic(+b.dataset.t)));
   $$(".trow, [data-pick]").forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); pickTopic(+(b.dataset.t || b.dataset.pick), true); }));
@@ -605,6 +614,7 @@ async function setView() {
     if (v === null) return;
     try { await api(`/api/sets/${set.id}`, { method: "PATCH", body: { exam: v } }); await refreshCur(); S.sets = []; setView(); } catch (e) { toast(e.message, true); }
   };
+  $("#export").addEventListener("click", () => exportCards().catch((e) => toast(e.message, true)));
   $("#exam-pill").addEventListener("click", examFn); $("#set-exam")?.addEventListener("click", examFn);
   $("#del-set").addEventListener("click", async () => { if (await confirmSheet({ title: "Delete this study set?", text: "Its topics, flashcards and progress are removed for good.", ok: "Delete", danger: true })) { await api(`/api/sets/${set.id}`, { method: "DELETE" }); S.cur = null; S.sets = []; toast("Deleted"); go("#/"); } });
   pickTopic(activeTopic().id);
@@ -615,17 +625,21 @@ function paintTopic() {
   if (!box) return;
   const base = `#/set/${set.id}/t/${t.id}`;
   const modes = [
-    { k: "guided", bg: "#e9defd", art: "🦉", tag: "Recommended", name: "Guided chat", st: "" },
-    { k: "read", bg: "#fff1b8", art: "📖", tag: "Catch up quickly", name: "Read", st: t.has_notes ? "opened" : "" },
-    { k: "cards", bg: "#cdf5d6", art: "🃏", tag: "Most popular", name: "Flashcards", st: t.cards ? `${t.cards} cards${t.due ? ` · ${t.due} due` : ""}` : "" },
-    { k: "quiz", bg: "#ffd9c2", art: "📝", tag: "Check yourself", name: "Quiz", st: t.quiz_best >= 0 ? `best ${t.quiz_best}%` : "" },
-    { k: "match", bg: "#d3ecff", art: "🧩", tag: "Quick game", name: "Match game", st: "" },
-    { k: "test", bg: "#ffd6e1", art: "🎯", tag: "Whole set", name: "Practice test", st: "" },
+    { k: "guided", bg: "var(--lilac-2)", art: "🦉", tag: "Recommended", name: "Guided chat", st: "" },
+    { k: "read", bg: "var(--butter)", art: "📖", tag: "Catch up quickly", name: "Read", st: t.has_notes ? "opened" : "" },
+    { k: "cards", bg: "var(--mint-bg)", art: "🃏", tag: "Most popular", name: "Flashcards", st: t.cards ? `${t.cards} cards${t.due ? ` · ${t.due} due` : ""}` : "" },
+    { k: "quiz", bg: "var(--peach)", art: "📝", tag: "Check yourself", name: "Quiz", st: t.quiz_best >= 0 ? `best ${t.quiz_best}%` : "" },
+    { k: "swipe", bg: "var(--rose-bg)", art: "🕹️", tag: "Earn aura", name: "Swipe game", st: "" },
+    { k: "explain", bg: "var(--sky-bg)", art: "💡", tag: "Teach it back", name: "Explain it", st: "" },
+    { k: "match", bg: "var(--butter)", art: "🧩", tag: "Quick game", name: "Match game", st: "" },
+    { k: "test", bg: "var(--lilac-2)", art: "🎯", tag: "Whole set", name: "Practice test", st: "" },
   ];
+  const steps = [["Read", t.has_notes, t.has_notes], ["Cards", t.cards > 0, t.cards > 0], ["Quiz", t.quiz_best >= 0, t.quiz_best >= 80]];
   box.innerHTML = `<section class="topic-card"><header><div><p class="kick">Topic ${i + 1} of ${topics.length} · ${statusWord(t)}</p><h2>${esc(t.title)}</h2></div>
       <button class="btn small" id="skip">Skip topic ▷</button></header>
     <p class="sum" dir="auto">${esc(t.summary)}</p>
     <div class="ideas">${t.points.slice(0, 6).map((p) => `<span dir="auto">${esc(p)}</span>`).join("")}</div>
+    <div class="steps3" aria-label="Progress on this topic">${steps.map(([n, started, pass], k) => `<span class="stp ${started ? "started" : ""} ${pass ? "pass" : ""}"><i>${pass ? "✓" : k + 1}</i>${n}</span>`).join("")}</div>
     <div class="modes" id="modes">${modes.map((m, k) => `<button class="mode" style="--bg:${m.bg};${k > 2 ? "display:none" : ""}" data-m="${m.k}" data-extra="${k > 2 ? 1 : 0}"><div class="art">${m.art}</div><div class="txt"><small>${m.tag}</small><b>${m.name}${m.st ? `<span class="st">${esc(m.st)}</span>` : ""}</b></div></button>`).join("")}</div>
     <div class="more"><button class="btn small" id="more">Show more ⌄</button></div></section>`;
   $("#skip").addEventListener("click", () => { const next = topics[(i + 1) % topics.length]; setActive(next.id); paintTopic(); $$(".ptab").forEach((b) => b.classList.toggle("on", +b.dataset.t === next.id)); $(".ptab.on")?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" }); });
@@ -634,6 +648,7 @@ function paintTopic() {
     const m = b.dataset.m;
     if (m === "guided") openTutor({ mode: "guided", topic: t.id, start: true });
     else if (m === "read") go(`${base}/read`); else if (m === "cards") go(`${base}/cards`); else if (m === "quiz") go(`${base}/quiz`);
+    else if (m === "swipe") go(`${base}/swipe`); else if (m === "explain") go(`${base}/explain`);
     else if (m === "match") go(`#/set/${set.id}/match`); else if (m === "test") go(`#/set/${set.id}/test`);
   }));
   $$(".ptab").forEach((b) => b.classList.toggle("on", +b.dataset.t === t.id));
@@ -833,16 +848,16 @@ async function matchView() {
     await refreshCur();
   }
   const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
-  const cut = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
   const play = () => {
-    const deck = shuffle([...cards]).slice(0, 6);
+    const short = cards.filter((c) => c.front.length <= 80 && c.back.length <= 130);      // short ones fit the tiles best
+    const deck = shuffle([...(short.length >= 6 ? short : cards)]).slice(0, 6);
     let sel = null, matched = 0, wrong = 0;
     const t0 = Date.now();
     const left = shuffle([...deck]), right = shuffle([...deck]);
     $("#view").innerHTML = `<div class="session" style="max-width:46rem!important"><div class="s-top"><a class="icon-btn" href="#/set/${set.id}" aria-label="Close">✕</a><div class="bar"><i id="mbar" style="width:0%"></i></div><small id="mtime">0s</small></div>
       <p class="hint">Match each term with its answer</p>
-      <div class="match"><div class="col">${left.map((c) => `<button class="m" data-side="l" data-id="${c.id}" dir="auto">${esc(cut(c.front, 70))}</button>`).join("")}</div>
-      <div class="col">${right.map((c) => `<button class="m" data-side="r" data-id="${c.id}" dir="auto">${esc(cut(c.back, 90))}</button>`).join("")}</div></div></div>`;
+      <div class="match"><div class="col">${left.map((c) => `<button class="m" data-side="l" data-id="${c.id}" dir="auto">${esc(c.front)}</button>`).join("")}</div>
+      <div class="col">${right.map((c) => `<button class="m" data-side="r" data-id="${c.id}" dir="auto">${esc(c.back)}</button>`).join("")}</div></div></div>`;
     const timer = setInterval(() => { const el = $("#mtime"); if (!el) return clearInterval(timer); el.textContent = `${Math.round((Date.now() - t0) / 1000)}s`; }, 500);
     $$(".m").forEach((b) => b.addEventListener("click", () => {
       if (b.classList.contains("ok")) return;
@@ -947,10 +962,12 @@ async function recordView() {
 async function settingsSheet() {
   sheet(`<h3>⚙️ Settings</h3><label>Your name<input id="s-name" value="${esc(S.me.name || "")}" maxlength="30"></label>
     <div class="sheet-actions"><button class="btn primary" id="s-save">Save</button></div><hr>
+    <label>Look<div class="seg" id="s-theme"><button data-t="auto">Auto</button><button data-t="light">Light</button><button data-t="dark">Dark</button></div></label><hr>
     <button class="btn" id="s-pair">📱 Use Cramly on another device</button>
     <p class="muted small">Your study sets live in this account on this device. To open them somewhere else, make a code and type it there.</p><hr>
     <button class="btn danger" id="s-del">Delete my account and all my study sets</button>
     <div class="sheet-actions"><button class="btn" data-close>Close</button></div>`, () => {
+    $$("#s-theme button").forEach((b) => { b.classList.toggle("on", b.dataset.t === themePref()); b.addEventListener("click", () => { setTheme(b.dataset.t); $$("#s-theme button").forEach((x) => x.classList.toggle("on", x === b)); }); });
     $("#s-save").addEventListener("click", async () => { await api("/api/me", { method: "PATCH", body: { name: $("#s-name").value } }); S.me.name = $("#s-name").value; toast("Saved"); closeSheet(); route(); });
     $("#s-pair").addEventListener("click", async () => { const d = await api("/api/pair", { body: {} }); sheet(`<h3>📱 Another device</h3><p class="muted">Open Cramly there, tap <b>I already use Cramly on another device</b>, and type:</p><div class="big-code">${d.code}</div><p class="muted small" style="text-align:center">Works for 10 minutes.</p><div class="sheet-actions"><button class="btn primary" data-close>Done</button></div>`); });
     $("#s-del").addEventListener("click", async () => { if (await confirmSheet({ title: "Delete everything?", text: "Your account and every study set are removed for good.", ok: "Delete it all", danger: true })) { await api("/api/me", { method: "DELETE" }); toast("Deleted"); signOut(); } });
@@ -963,7 +980,7 @@ $("#start-form").addEventListener("submit", async (e) => {
   try {
     const d = await api("/api/account", { body: { name: $("#start-name").value } });
     key = d.key; ls.set("cramly.key", key);
-    await boot();
+    await document.addEventListener("DOMContentLoaded", boot);
   } catch (err) { toast(err.message, true); }
   btn.disabled = false;
 });
@@ -982,4 +999,4 @@ async function boot() {
   await route();
 }
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => { /* not critical */ });
-boot();
+document.addEventListener("DOMContentLoaded", boot);

@@ -219,6 +219,44 @@ right answer over positions A-D. No "all of the above". `why` explains the answe
     return good
 
 
+SWIPE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["cards"], "properties": {"cards": {"type": "array", "items": {
+    "type": "object", "additionalProperties": False, "required": ["q", "options", "answer", "why"],
+    "properties": {"q": {"type": "string"}, "options": {"type": "array", "items": {"type": "string"}},
+                   "answer": {"type": "integer", "description": "0 or 1: which of the two options is right"},
+                   "why": {"type": "string", "description": "one short sentence on why"}}}}}}
+
+
+def make_swipes(topic, context, n=14, avoid=()):
+    system = f"""You write cards for a swipe game that tests ONE topic from the student's material. A character shows a card; the student
+swipes toward one of TWO answers. Write {n} cards. Each card: `q` is a short question or claim (max 18 words); `options` is exactly two
+short answers (max 6 words each): one right, and one TEMPTING wrong answer built on a common mix-up or misconception, never silly.
+About one card in three can be a true/false claim with options "True" and "False" (then `q` is a one-sentence claim; make about half
+of those claims FALSE: subtly wrong versions of real facts).
+Put the right answer first about half the time and second the other half (`answer` is its index, 0 or 1). `why` is one short sentence.
+Cover different ideas; ask only what the material supports. {LANG}"""
+    note = ("\nAlready used (don't repeat): " + " | ".join(list(avoid)[:20])) if avoid else ""
+    cards = ask_json(system, _topic_prompt(topic, context) + note, SWIPE_SCHEMA, "swipes", effort="low")["cards"]
+    return [c for c in cards if len(c["options"]) == 2 and c["answer"] in (0, 1) and c["q"].strip() and all(o.strip() for o in c["options"])]
+
+
+EXPLAIN_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["score", "verdict", "got", "missing", "tip"], "properties": {
+    "score": {"type": "integer", "description": "0-100: how accurate and complete the explanation is"},
+    "verdict": {"type": "string", "description": "a short encouraging headline"},
+    "got": {"type": "array", "items": {"type": "string"}, "description": "2-4 things they explained well"},
+    "missing": {"type": "array", "items": {"type": "string"}, "description": "1-4 important ideas they missed or got wrong, each with the correct idea"},
+    "tip": {"type": "string", "description": "one sentence on how to explain it better next time"}}}
+
+
+def grade_explanation(topic, context, text):
+    system = f"""A student is explaining ONE topic in their own words (the Feynman technique). Grade it against their study material:
+score 0-100 for accuracy and completeness (a good, simple, mostly complete explanation is 80-90; vague is 40-60). Be kind and specific.
+`got`: what they explained well. `missing`: important ideas they left out or got wrong, each stated correctly in a short phrase.
+Never penalise simple wording. Reply in the language the student wrote in."""
+    r = ask_json(system, _topic_prompt(topic, context) + f"\n\nTHE STUDENT'S EXPLANATION:\n{text}", EXPLAIN_SCHEMA, "explain", effort="low")
+    r["score"] = max(0, min(100, r["score"]))
+    return r
+
+
 # ---------- the tutor ----------
 def _sse(resp):
     for raw in resp.iter_lines():

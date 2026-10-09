@@ -538,6 +538,26 @@ def ensure_quiz(topic):
         return qs
 
 
+def _swipe_list(t):
+    return json.loads(t["swipes"]) if t.get("swipes") else []
+
+
+def ensure_swipes(topic, more=False):
+    """Swipe cards for a topic: made once (14), and `more` adds 14 new ones (up to 42)."""
+    with _topic_lock(topic["id"], "swipes"):
+        fresh = db.one(select(db.topics).where(db.topics.c.id == topic["id"]))
+        have = _swipe_list(fresh)
+        if have and not (more and len(have) < 42):
+            return have
+        made = ai.make_swipes(fresh, _context(fresh["set_id"], fresh), avoid=[c["q"] for c in have])
+        seen = {c["q"].strip().lower() for c in have}
+        have += [c for c in made if c["q"].strip().lower() not in seen]
+        if not have:
+            raise ai.AIError("I couldn't write swipe cards for that topic. Try again.")
+        db.run(update(db.topics).where(db.topics.c.id == topic["id"]).values(swipes=json.dumps(have, ensure_ascii=False)))
+        return have
+
+
 def _generate(kind):
     @need_user
     def route(user, topic_id):
@@ -553,6 +573,10 @@ def _generate(kind):
                 return jsonify(notes=ensure_notes(t))
             if kind == "cards":
                 return jsonify(cards=[_card_view(c) for c in ensure_cards(t)])
+            if kind == "swipes":
+                cards = ensure_swipes(t, more=bool(request.args.get("more")))
+                random.shuffle(cards)
+                return jsonify(cards=cards[:14], pool=len(cards))
             return jsonify(questions=ensure_quiz(t))
         except ai.AIError as exc:
             return jsonify(error=str(exc)), 502
@@ -563,7 +587,7 @@ def _generate(kind):
     return route
 
 
-for _kind in ("notes", "cards", "quiz"):
+for _kind in ("notes", "cards", "quiz", "swipes"):
     app.add_url_rule(f"/api/topics/<int:topic_id>/{_kind}", view_func=_generate(_kind), methods=["GET"])
 
 
@@ -590,12 +614,70 @@ def topic_event(user, topic_id):
         vals["quiz_best"] = max(t["quiz_best"], pct)
         if pct >= 80:
             status = 2
-    elif kind not in ("read", "cards", "chat"):
+    elif kind == "explain":
+        try:
+            if int(b.get("score")) >= 85:
+                status = 2                                              # explaining it well is the strongest proof
+        except (TypeError, ValueError):
+            return jsonify(error="Bad score."), 400
+    elif kind not in ("read", "cards", "chat", "swipe"):
         return jsonify(error="Unknown event."), 400
     vals["status"] = status
     db.run(update(db.topics).where(db.topics.c.id == topic_id).values(**vals))
     record_activity(user)
     return jsonify(status=status, quiz_best=vals.get("quiz_best", t["quiz_best"]))
+
+
+@app.post("/api/topics/<int:topic_id>/explain")
+@need_user
+def explain(user, topic_id):
+    """The student explains a topic in their own words; the AI says what they got and what they missed."""
+    if (bad := need_ai()):
+        return bad
+    t = own_topic(user, topic_id)
+    if not t:
+        return jsonify(error="Topic not found."), 404
+    text = ingest.clean(str((request.get_json(silent=True) or {}).get("text") or ""))[:3000]
+    if len(text) < 40:
+        return jsonify(error="Write a few sentences first: explain it like you're teaching a friend."), 400
+    if limited("generate", 150):
+        return jsonify(error="That's a lot of study material in an hour. Take a short break and come back."), 429
+    try:
+        return jsonify(**ai.grade_explanation(t, _context(t["set_id"], t, text), text))
+    except ai.AIError as exc:
+        return jsonify(error=str(exc)), 502
+    except Exception:
+        log.exception("explain failed")
+        return jsonify(error="Couldn't check that just now. Try again."), 502
+
+
+@app.get("/api/sets/<int:set_id>/swipes")
+@need_user
+def set_swipes(user, set_id):
+    """A mixed round of swipe cards from every topic (making cards for topics that don't have any yet)."""
+    if (bad := need_ai()):
+        return bad
+    if not own_set(user, set_id):
+        return jsonify(error="Study set not found."), 404
+    topics = db.many(select(db.topics).where(db.topics.c.set_id == set_id).order_by(db.topics.c.idx))
+    missing = [t for t in topics if not t["swipes"]]
+    if missing:
+        if limited("generate", 150):
+            return jsonify(error="That's a lot of study material in an hour. Take a short break and come back."), 429
+
+        def one_topic(t):
+            try:
+                ensure_swipes(t)
+            except Exception:
+                log.exception("swipes failed for topic %s", t["id"])
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            list(pool.map(one_topic, missing[:10]))
+        topics = db.many(select(db.topics).where(db.topics.c.set_id == set_id).order_by(db.topics.c.idx))
+    pool_cards = [{**c, "topic_id": t["id"], "topic": t["title"]} for t in topics for c in _swipe_list(t)]
+    if len(pool_cards) < 6:
+        return jsonify(error="I couldn't make a game yet. Try again in a moment."), 502
+    random.shuffle(pool_cards)
+    return jsonify(cards=pool_cards[:14])
 
 
 @app.post("/api/cards/<int:card_id>/review")

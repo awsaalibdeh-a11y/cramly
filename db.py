@@ -65,6 +65,7 @@ topics = Table("topics", meta,
     Column("notes", Text, default=""),                             # the "Read" page (markdown), made on first open
     Column("quiz", Text, default=""),                              # JSON questions, made on first open
     Column("quiz_best", Integer, default=-1),                      # best score in percent
+    Column("swipes", Text, default=""),                            # JSON swipe-game cards (a question with two answers)
     Column("studied", Float, default=0),
 )
 cards = Table("cards", meta,
@@ -84,6 +85,18 @@ activity = Table("activity", meta,
     Column("n", Integer, default=0),
 )
 meta.create_all(engine)
+
+
+def _migrate():
+    """create_all adds new tables but not new columns, so older databases get them added here (safe to run every start)."""
+    from sqlalchemy import inspect, text
+    have = {c["name"] for c in inspect(engine).get_columns("topics")}
+    with engine.begin() as c:
+        if "swipes" not in have:
+            c.execute(text("ALTER TABLE topics ADD COLUMN swipes TEXT DEFAULT ''"))
+
+
+_migrate()
 
 
 def hash_key(key):

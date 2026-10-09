@@ -33,7 +33,7 @@ def fake_plan(text, hint="", on_status=None):
     return json.loads(json.dumps(PLAN))
 
 
-class Cramly(unittest.TestCase):
+class Base(unittest.TestCase):
     def setUp(self):
         self.c = server.app.test_client()
         server._hits.clear()
@@ -51,6 +51,9 @@ class Cramly(unittest.TestCase):
     def topics(self, sid):
         return self.c.get(f"/api/sets/{sid}", headers=self.h).get_json()["topics"]
 
+
+
+class Cramly(Base):
     def test_needs_a_key(self):
         self.assertEqual(self.c.get("/api/sets").status_code, 401)
         self.assertEqual(self.c.get("/api/sets", headers={"Authorization": "Bearer nope"}).status_code, 401)
@@ -197,6 +200,60 @@ class Cramly(unittest.TestCase):
         sw = self.c.get("/sw.js")
         self.assertEqual(sw.headers["Service-Worker-Allowed"], "/")
         sw.close()
+
+
+SWIPES = [{"q": f"Card {i}?", "options": ["right", "wrong"], "answer": i % 2, "why": "because"} for i in range(14)]
+
+
+class Round2(Base):
+    """Swipe game, explain-it-back and the database upgrade."""
+
+    def test_swipe_cards_are_made_once_and_more_adds_new_ones(self):
+        tid = self.topics(self.make_set())[0]["id"]
+        batch = iter([SWIPES, [{"q": f"New {i}?", "options": ["a", "b"], "answer": 0, "why": "w"} for i in range(14)] + SWIPES[:2]])
+        with mock.patch.object(ai, "make_swipes", side_effect=lambda *a, **k: next(batch)) as made:
+            d = self.c.get(f"/api/topics/{tid}/swipes", headers=self.h).get_json()
+            self.assertEqual((len(d["cards"]), d["pool"]), (14, 14))
+            self.assertEqual(made.call_count, 1)
+            self.c.get(f"/api/topics/{tid}/swipes", headers=self.h)
+            self.assertEqual(made.call_count, 1)                                    # cached
+            d = self.c.get(f"/api/topics/{tid}/swipes?more=1", headers=self.h).get_json()
+            self.assertEqual(d["pool"], 28)                                         # 14 new; the 2 repeats were dropped
+        for c in d["cards"]:
+            self.assertEqual((len(c["options"]), c["answer"] in (0, 1)), (2, True))
+
+    def test_whole_set_swipe_round_mixes_topics(self):
+        sid = self.make_set()
+        with mock.patch.object(ai, "make_swipes", return_value=SWIPES):
+            cards = self.c.get(f"/api/sets/{sid}/swipes", headers=self.h).get_json()["cards"]
+        self.assertEqual(len(cards), 14)
+        self.assertTrue({c["topic"] for c in cards} <= {t["title"] for t in PLAN["topics"]})
+        self.assertGreater(len({c["topic_id"] for c in cards}), 1)
+
+    def test_explain_it_back_grades_and_can_master(self):
+        tid = self.topics(self.make_set())[0]["id"]
+        verdict = {"score": 91, "verdict": "Great", "got": ["a"], "missing": [], "tip": "t"}
+        with mock.patch.object(ai, "grade_explanation", return_value=verdict) as grade:
+            short = self.c.post(f"/api/topics/{tid}/explain", headers=self.h, json={"text": "too short"})
+            self.assertEqual(short.status_code, 400)
+            r = self.c.post(f"/api/topics/{tid}/explain", headers=self.h, json={"text": "Cells are the basic unit of life and they contain a nucleus and organelles."})
+        self.assertEqual(r.get_json()["score"], 91)
+        self.assertEqual(grade.call_count, 1)
+        post = lambda **b: self.c.post(f"/api/topics/{tid}/event", headers=self.h, json=b).get_json()
+        self.assertEqual(post(kind="swipe")["status"], 1)
+        self.assertEqual(post(kind="explain", score=60)["status"], 1)
+        self.assertEqual(post(kind="explain", score=88)["status"], 2)               # explaining it well masters it
+        self.assertEqual(self.c.post(f"/api/topics/{tid}/event", headers=self.h, json={"kind": "explain"}).status_code, 400)
+
+    def test_old_databases_get_the_new_column(self):
+        from sqlalchemy import create_engine, inspect, text
+        old = create_engine("sqlite://")
+        with old.begin() as c:
+            c.execute(text("CREATE TABLE topics (id INTEGER PRIMARY KEY, title TEXT)"))
+        with mock.patch.object(server.db, "engine", old):
+            server.db._migrate()
+            server.db._migrate()                                                    # safe to run twice
+            self.assertIn("swipes", {c["name"] for c in inspect(old).get_columns("topics")})
 
 
 class Reading(unittest.TestCase):
