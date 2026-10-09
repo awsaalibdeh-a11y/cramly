@@ -1,0 +1,10 @@
+flask
+gunicorn
+python-dotenv
+requests
+sqlalchemy
+psycopg[binary]
+pypdf
+python-docx
+python-pptx
+Pillow

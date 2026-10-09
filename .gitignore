@@ -1,0 +1,5 @@
+.env
+.app_secret
+cramly.db
+__pycache__/
+*.pyc

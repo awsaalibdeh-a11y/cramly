@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Cramly · study smarter from your own notes</title>
+  <meta name="description" content="Upload your notes, slides, PDFs or photos. Cramly turns them into a study plan with a tutor, notes, flashcards and quizzes.">
+  <meta name="theme-color" content="#f7f2e8">
+  <link rel="icon" href="{{ url_for('static', filename='icon-64.png') }}" type="image/png">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icon-192.png') }}">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ v }}">
+  <script defer src="{{ url_for('static', filename='app.js') }}?v={{ v }}"></script>
+</head>
+<body>
+  <!-- first visit -->
+  <main class="welcome" id="welcome" hidden>
+    <div class="w-left">
+      <div class="logo big"><img src="{{ url_for('static', filename='icon-192.png') }}" alt="" width="52" height="52"><b>Cramly</b></div>
+      <h1>Turn your notes into <em>something you can actually learn from.</em></h1>
+      <p class="lead">Drop in a PDF, slides, a photo of your notebook or a recorded lecture. Cramly builds a study plan, then teaches it to you: a tutor that asks you questions, short notes, flashcards that come back when you're about to forget, and quizzes.</p>
+      <form id="start-form" class="start">
+        <input id="start-name" maxlength="30" placeholder="What should I call you?" autocomplete="given-name" aria-label="Your name">
+        <button class="btn primary big" type="submit">Start studying →</button>
+      </form>
+      <button class="link" id="have-code" type="button">I already use Cramly on another device</button>
+      <ul class="ticks"><li>✓ Works with Arabic and English</li><li>✓ No sign-up, no password</li><li>✓ Free</li></ul>
+    </div>
+    <div class="w-right" aria-hidden="true">
+      <div class="demo d1"><span>📄</span><b>Chapter 3.pdf</b><small>→ 11 topics</small></div>
+      <div class="demo d2"><span>🦉</span><b>Tutor</b><small>"What happens to the electrons when sodium meets chlorine?"</small></div>
+      <div class="demo d3"><span>🃏</span><b>Flashcards</b><small>Comes back in 3 days</small></div>
+      <div class="demo d4"><span>🎯</span><b>Practice test</b><small>Score: 85%</small></div>
+    </div>
+  </main>
+
+  <!-- the app -->
+  <div class="app" id="app" hidden>
+    <aside class="side" id="side"></aside>
+    <div class="stage">
+      <header class="top" id="top"></header>
+      <main class="view" id="view" tabindex="-1"></main>
+    </div>
+    <aside class="tutor" id="tutor" aria-label="Tutor"></aside>
+  </div>
+
+  <nav class="tabbar" id="tabbar" hidden>
+    <a href="#/" data-tab="home"><i>🏠</i><span>Home</span></a>
+    <a href="#/calendar" data-tab="calendar"><i>📅</i><span>Plan</span></a>
+    <a href="#/new" data-tab="new" class="plus"><i>＋</i><span>New</span></a>
+    <a href="#/review" data-tab="review"><i>🃏</i><span>Review</span></a>
+    <button type="button" id="tab-tutor" data-tab="tutor"><i>🦉</i><span>Tutor</span></button>
+  </nav>
+
+  <div class="busy" id="busy" hidden><div class="busy-card"><div class="owl">🦉</div><h3 id="busy-title">Working on it…</h3><p id="busy-line">One moment</p><div class="dots"><i></i><i></i><i></i></div></div></div>
+  <dialog class="sheet" id="sheet"><div class="sheet-card" id="sheet-body"></div></dialog>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <canvas id="confetti" aria-hidden="true"></canvas>
+</body>
+</html>
