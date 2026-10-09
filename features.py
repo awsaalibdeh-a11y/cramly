@@ -5,6 +5,7 @@
 """
 
 import hmac
+import json
 import os
 import secrets
 import time
@@ -22,6 +23,19 @@ def register(core):
         if len(want) < 12:                                              # no key set (or a weak one): the tools stay off
             return False
         return hmac.compare_digest(want.encode(), request.headers.get("X-Admin-Key", "").encode())
+
+    def note(text):
+        """Every owner action leaves a line here, newest first, so you can see that it really happened."""
+        try:
+            entries = json.loads(db.setting("admin_log") or "[]")
+        except ValueError:
+            entries = []
+        entries.insert(0, {"t": time.time(), "text": text})
+        db.set_setting("admin_log", json.dumps(entries[:80]))
+
+    def who(uid):
+        u = db.one(select(db.users).where(db.users.c.id == uid))
+        return (u["name"] or f"#{uid}") if u else f"#{uid}"
 
     def admin_only(fn):
         def wrapped(*a, **k):
@@ -126,6 +140,8 @@ def register(core):
         b = request.get_json(silent=True) or {}
         on = 1 if b.get("banned", True) else 0
         db.run(update(db.users).where(db.users.c.id == uid).values(banned=on, ban_reason=str(b.get("reason") or "")[:300] if on else ""))
+        why = str(b.get("reason") or "").strip()
+        note(("Banned " if on else "Unbanned ") + who(uid) + (f": {why}" if on and why else ""))
         return jsonify(ok=True, banned=bool(on))
 
     @app.post("/api/admin/users/<int:uid>/timeout")
@@ -140,6 +156,7 @@ def register(core):
             return jsonify(error="Minutes should be a number."), 400
         until = time.time() + minutes * 60 if minutes else 0
         db.run(update(db.users).where(db.users.c.id == uid).values(timeout_until=until, ban_reason=str(b.get("reason") or "")[:300] if minutes else ""))
+        note(f"Timed out {who(uid)} for {minutes} min" if minutes else f"Lifted the break for {who(uid)}")
         return jsonify(ok=True, until=until)
 
     @app.post("/api/admin/users/<int:uid>/message")
@@ -151,6 +168,7 @@ def register(core):
         if not body:
             return jsonify(error="Write a message first."), 400
         db.run(insert(db.messages).values(user_id=uid, body=body, created=time.time(), seen=0))
+        note(f"Messaged {who(uid)}")
         return jsonify(ok=True)
 
     @app.post("/api/admin/broadcast")
@@ -165,6 +183,7 @@ def register(core):
         ids = [u["id"] for u in db.many(select(db.users)) if (u["last_seen"] or 0) >= cutoff]
         for uid in ids:
             db.run(insert(db.messages).values(user_id=uid, body=body, created=time.time(), seen=0))
+        note(f"Broadcast to {len(ids)} people")
         return jsonify(ok=True, sent=len(ids))
 
     @app.post("/api/admin/users/<int:uid>/premium")
@@ -179,14 +198,17 @@ def register(core):
             except (TypeError, ValueError):
                 return jsonify(error="Days should be a number."), 400
             db.run(update(db.users).where(db.users.c.id == uid).values(premium=1, invite_id=0, plus=1 if b.get("plan") == "plus" else 0, premium_until=time.time() + days * 86400 if days else 0))
+            note(f"Gave {who(uid)} {'Premium Plus' if b.get('plan') == 'plus' else 'Premium'}" + (f" for {days} days" if days else ""))
         else:
             db.run(update(db.users).where(db.users.c.id == uid).values(premium=0, plus=0, premium_until=0))
+            note(f"Removed premium from {who(uid)}")
         return jsonify(ok=True)
 
     @app.post("/api/admin/users/<int:uid>/reset-trial")
     @admin_only
     def admin_reset_trial(uid):
         db.run(update(db.users).where(db.users.c.id == uid).values(trial_used=0, trial_calls=0))
+        note(f"Reset the free minute for {who(uid)}")
         return jsonify(ok=True)
 
     @app.delete("/api/admin/users/<int:uid>")
@@ -194,6 +216,7 @@ def register(core):
     def admin_delete_user(uid):
         if not target_user(uid):
             return jsonify(error="No such account."), 404
+        note(f"Deleted the account of {who(uid)}")
         for st in db.many(select(db.sets.c.id).where(db.sets.c.user_id == uid)):
             core.purge_set(st["id"])
         for t in (db.activity, db.pair_codes, db.devices, db.messages):
@@ -202,6 +225,14 @@ def register(core):
         return jsonify(ok=True)
 
     # ---------------------------------------------------------------- the kill switch
+    @app.get("/api/admin/log")
+    @admin_only
+    def admin_log():
+        try:
+            return jsonify(entries=json.loads(db.setting("admin_log") or "[]")[:40])
+        except ValueError:
+            return jsonify(entries=[])
+
     @app.get("/api/admin/settings")
     @admin_only
     def admin_get_settings():
@@ -215,6 +246,8 @@ def register(core):
             db.set_setting("maintenance", "1" if b["maintenance"] else "0")
         if "message" in b:
             db.set_setting("maintenance_msg", str(b["message"] or "")[:300])
+        if "maintenance" in b:
+            note("Switched Cramly OFF" if b["maintenance"] else "Switched Cramly back ON")
         return jsonify(maintenance=db.setting("maintenance") == "1", message=db.setting("maintenance_msg"))
 
     # ---------------------------------------------------------------- the link you send people
