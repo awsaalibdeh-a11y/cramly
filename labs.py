@@ -137,7 +137,7 @@ def register(core):
             return ai_error(exc)
 
     @app.route("/api/topics/<int:topic_id>/mynotes", methods=["GET", "PUT"])
-    @need_user
+    @need_premium
     def mynotes(user, topic_id):
         t = own_topic(user, topic_id)
         if not t:

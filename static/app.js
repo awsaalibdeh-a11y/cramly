@@ -69,7 +69,7 @@ async function api(path, { method, body, form, signal } = {}) {
   const r = await fetch(path, { method: method || (payload ? "POST" : "GET"), headers, body: payload, signal });
   const d = await r.json().catch(() => ({}));
   if (r.status === 401 && key) { signOut(); throw new Error("Signed out."); }
-  if (r.status === 402 && d.locked) { showPaywall(d); throw new Error(d.error || "Free minute used."); }
+  if (r.status === 402 && d.locked) { showPaywall(d); throw new Error(d.error || "Today's free premium-tool time is used up."); }
   if (r.status === 400 && d.plan_limit || r.status === 413 && d.plan_limit) { plansSheet("premium", d.error); throw new Error(d.error); }
   if (gateScreen(r.status, d)) throw new Error(d.error || "Blocked.");
   if (!r.ok) throw new Error(d.error || "Something went wrong.");

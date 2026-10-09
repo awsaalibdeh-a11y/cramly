@@ -37,8 +37,8 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 MAX_SETS = 30
 INTERVAL_DAYS = [0, 1, 3, 7, 14, 30]                                   # Leitner boxes 0..5
 
-TRIAL_SECONDS = int(os.environ.get("TRIAL_SECONDS", "60"))              # the free minute
-TRIAL_CALLS = int(os.environ.get("TRIAL_CALLS", "8"))                  # and at most this many AI jobs inside it
+TRIAL_SECONDS = int(os.environ.get("TRIAL_SECONDS", "1200"))            # free accounts get this many seconds (20 minutes) of premium tools per day
+TRIAL_CALLS = int(os.environ.get("TRIAL_CALLS", "40"))                 # and at most this many AI jobs a day
 CONTACT = os.environ.get("CONTACT_EMAIL", "Awsaa.libdeh@gmail.com")
 FREE_ACCOUNTS_PER_DAY = int(os.environ.get("FREE_ACCOUNTS_PER_DAY", "4"))     # new free accounts per visitor address per day
 
@@ -88,7 +88,7 @@ def is_plus(user):
     return False
 
 
-PLAN_LIMITS = {"free": {"sets": 3, "file_mb": 25}, "premium": {"sets": 30, "file_mb": 200}, "plus": {"sets": 100, "file_mb": 1024}}
+PLAN_LIMITS = {"free": {"sets": 2, "file_mb": 10}, "premium": {"sets": 30, "file_mb": 200}, "plus": {"sets": 100, "file_mb": 1024}}
 
 
 def plan_of(user):
@@ -97,6 +97,14 @@ def plan_of(user):
 
 def limits_for(user):
     return PLAN_LIMITS[plan_of(user)]
+
+
+def roll_trial(user):
+    """The free premium-tool time is per day: a new day starts fresh."""
+    today = local_today().isoformat()
+    if (user["trial_day"] or "") != today:
+        db.run(update(db.users).where(db.users.c.id == user["id"]).values(trial_used=0, trial_calls=0, trial_at=0, trial_day=today))
+        user["trial_used"], user["trial_calls"], user["trial_at"], user["trial_day"] = 0, 0, 0, today
 
 
 def trial_left(user):
@@ -115,7 +123,7 @@ def touch(user):
     user["trial_used"], user["trial_at"] = used, now
 
 
-LOCKED = {"error": "Your free minute is up.", "locked": True}
+LOCKED = {"error": "Your free premium-tool time for today is used up.", "locked": True}
 
 
 def lockout(user):
@@ -146,9 +154,10 @@ def _wrap(fn, gated, plus=False, metered=False):
         if gated and (blocked := lockout(user)):
             return blocked
         db.run(update(db.users).where(db.users.c.id == user["id"]).values(last_seen=time.time()))
+        roll_trial(user)
         out_of_time = trial_left(user) <= 0 or (user["trial_calls"] or 0) > TRIAL_CALLS
         if plus and not user["is_plus"] and (user["is_premium"] or out_of_time):
-            msg = "This tool is part of Premium Plus." if user["is_premium"] else "Your free minute of premium tools is up."
+            msg = "This tool is part of Premium Plus." if user["is_premium"] else "Your free premium-tool time for today is used up."
             return jsonify(error=msg, locked=True, plus=True, contact=CONTACT), 402
         if metered and not user["is_premium"]:               # a premium-only feature: free accounts get one minute of it
             if out_of_time:
@@ -163,6 +172,16 @@ def _wrap(fn, gated, plus=False, metered=False):
 def need_user(fn):
     """Signed in. Free for every plan: reading, reviewing and the tools that need no AI."""
     return _wrap(fn, True)
+
+
+def gate_premium(user):
+    """The same rule as @need_premium, for a route that is free in part (like /api/stats?full=1). Returns a 402 or None."""
+    if user["is_premium"]:
+        return None
+    if trial_left(user) <= 0 or (user["trial_calls"] or 0) > TRIAL_CALLS:
+        return jsonify(**LOCKED, contact=CONTACT), 402
+    touch(user)
+    return None
 
 
 def need_premium(fn):

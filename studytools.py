@@ -88,7 +88,7 @@ def register(core):
 
     # ---------------------------------------------------------------- mind map (from the plan: instant, free)
     @app.get("/api/sets/<int:set_id>/mindmap")
-    @need_user
+    @need_premium
     def mindmap(user, set_id):
         s = own_set(user, set_id)
         if not s:
@@ -173,6 +173,8 @@ def register(core):
     @app.get("/api/stats")
     @need_user
     def stats(user):
+        if request.args.get("full") and (bad := core.gate_premium(user)):            # the full dashboard is Premium; the basics stay free
+            return bad
         today = core.local_today()
         by_day = {r["day"]: r["n"] for r in db.many(select(db.activity).where(db.activity.c.user_id == user["id"]))}
         days = [{"day": (today - dt.timedelta(days=i)).isoformat(), "n": by_day.get((today - dt.timedelta(days=i)).isoformat(), 0)} for i in range(118, -1, -1)]
@@ -207,7 +209,7 @@ def register(core):
         return (front, back) if front and back else (None, None)
 
     @app.post("/api/topics/<int:topic_id>/cards/add")
-    @need_user
+    @need_premium
     def add_card(user, topic_id):
         t = own_topic(user, topic_id)
         if not t:
@@ -221,7 +223,7 @@ def register(core):
         return jsonify(card=core._card_view(db.one(select(db.cards).where(db.cards.c.id == cid))))
 
     @app.patch("/api/cards/<int:card_id>")
-    @need_user
+    @need_premium
     def edit_card(user, card_id):
         if not own_card(user, card_id):
             return jsonify(error="Card not found."), 404
@@ -232,7 +234,7 @@ def register(core):
         return jsonify(ok=True)
 
     @app.delete("/api/cards/<int:card_id>")
-    @need_user
+    @need_premium
     def remove_card(user, card_id):
         if not own_card(user, card_id):
             return jsonify(error="Card not found."), 404
@@ -240,7 +242,7 @@ def register(core):
         return jsonify(ok=True)
 
     @app.post("/api/topics/<int:topic_id>/cards/more")
-    @need_user
+    @need_premium
     def more_cards(user, topic_id):
         t = own_topic(user, topic_id)
         if not t:

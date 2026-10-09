@@ -33,9 +33,9 @@ const FEATURES = [
 function accessChip() {
   if (!S.me) return "";
   if (S.me.premium) return `<button class="chip-btn prem ${planNow()}" id="acc-chip" title="Your plan">${ic("star")}<b>${S.me.plan === "plus" ? "Plus" : "Premium"}</b></button>`;
-  if (S.me.locked) return `<button class="chip-btn trial locked" id="acc-chip" title="Your free minute is used">${ic("lock")}<b>Free plan</b></button>`;
+  if (S.me.locked) return `<button class="chip-btn trial locked" id="acc-chip" title="Today's free premium-tool time is used up">${ic("lock")}<b>Free plan</b></button>`;
   const left = Math.max(0, Math.round(S.me.trial_left ?? 0));
-  return `<button class="chip-btn trial ${left <= 15 ? "hot" : ""}" id="acc-chip" title="Free minute of premium tools left">${ic("timer")}<b id="acc-left">${clock(left)}</b><span class="lbl">free</span></button>`;
+  return `<button class="chip-btn trial ${left <= 15 ? "hot" : ""}" id="acc-chip" title="Free premium-tool time left today">${ic("timer")}<b id="acc-left">${clock(left)}</b><span class="lbl">free</span></button>`;
 }
 function wireAccess() {
   $("#acc-chip")?.addEventListener("click", () => plansSheet(S.me?.premium ? "plus" : "premium"));
@@ -105,7 +105,7 @@ function minuteOverNotice() {
   if ($("#snack")) return;
   const el = document.createElement("div");
   el.id = "snack"; el.className = "snack"; el.setAttribute("role", "status");
-  el.innerHTML = `<span>⏱</span><div><b>Your free minute of premium tools is over.</b><small>Everything free stays open: reading, reviews, notes, focus room and more.</small></div><button class="btn small primary" id="snack-plans" type="button">See plans</button><button class="icon-btn" id="snack-x" aria-label="Dismiss">✕</button>`;
+  el.innerHTML = `<span>⏱</span><div><b>Today's 20 free minutes of premium tools are used up.</b><small>They come back tomorrow. Everything free stays open.</small></div><button class="btn small primary" id="snack-plans" type="button">See plans</button><button class="icon-btn" id="snack-x" aria-label="Dismiss">✕</button>`;
   document.body.append(el);
   const gone = () => el.remove();
   $("#snack-plans").addEventListener("click", () => { gone(); plansSheet("premium"); });
@@ -125,9 +125,9 @@ function showPaywall(info = {}) {
   el.id = "paywall";
   el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "pw-title");
   el.innerHTML = `<div class="pw-card">
-      <span class="pw-badge">${ic("timer")} Free minute used up</span>
+      <span class="pw-badge">${ic("timer")} Today's free time is used up</span>
       <h1 id="pw-title">That one needs Premium</h1>
-      <p class="pw-lead">That tool is part of Premium. The free minute to try it is over, but <b>the rest of Cramly stays free</b>. To use it again, <b>message Awsaa for premium</b>. Premium normally costs <b>$2.99</b>, but it is a <b>free gift</b> when you are invited. Message and you will get a personal link that unlocks everything.</p>
+      <p class="pw-lead">That tool is part of Premium. Your 20 free minutes for today are used up (they come back tomorrow), and <b>the rest of Cramly stays free</b>. To use it again, <b>message Awsaa for premium</b>. Premium normally costs <b>$2.99</b>, but it is a <b>free gift</b> when you are invited. Message and you will get a personal link that unlocks everything.</p>
       <button class="btn primary big pw-mail" id="pw-ask" type="button">${ic("mail")} Message Awsaa here</button>
       <a class="link" id="pw-mail" href="${esc(mailLink())}">or send an email instead</a>
       <div class="pw-addr"><code>${esc(info.contact || contact())}</code><button class="btn small" id="pw-copy" type="button">${ic("copy")} Copy</button></div>
@@ -200,7 +200,7 @@ function upgradeSheet() {
   if (S.me?.trial_left <= 0) return plansSheet("premium");
   const left = Math.max(0, Math.round(S.me?.trial_left ?? 0));
   sheet(`<h3>${ic("timer")} ${clock(left)} of free time left</h3>
-    <p class="muted">Everything in Cramly works for your first minute. After that, premium keeps it going. It is by invitation: message Awsaa and you will get a personal link.</p>
+    <p class="muted">Free accounts can try every premium tool for 20 minutes a day. Premium removes the limit. It is by invitation: message Awsaa and you will get a personal link.</p>
     <ul class="pw-list tight">${FEATURES.map(([e, t]) => `<li><span>${e}</span>${esc(t)}</li>`).join("")}</ul>
     <div class="sheet-actions"><button class="btn" data-close>Keep studying</button><a class="btn primary" href="${esc(mailLink())}">${ic("mail")} Message Awsaa</a></div>`);
 }
@@ -284,7 +284,7 @@ function showInbox() {
 /* ---------- the three plans ---------- */
 const PLAN_NAMES = { free: "Free", premium: "Premium", plus: "Premium Plus" };
 const PLANS = [
-  { id: "free", icon: "🌱", name: "Free", tag: "forever", items: ["Read and review everything you made", "Flashcard reviews and daily review", "Mind map, progress, calendar", "My notes, focus room with sounds", "Themes, search, daily goal", "1 free minute of every AI tool", "3 study sets, files up to 25 MB"] },
+  { id: "free", icon: "🌱", name: "Free", tag: "forever", items: ["Read and review everything you made", "Flashcard reviews and daily review", "Mind map, progress, calendar", "My notes, focus room with sounds", "Themes, search, daily goal", "20 free minutes a day to try premium tools", "3 study sets, files up to 25 MB"] },
   { id: "premium", icon: "⭐", name: "Premium", tag: "normally $2.99", items: ["Everything in Free", "Unlimited AI tutor, notes, cards and quizzes", "Listen: two-host podcast of any topic", "Cheat sheets, snap and solve, exam builder", "Glossary and swipe game", "30 study sets, files up to 200 MB"] },
   { id: "plus", icon: "✨", name: "Premium Plus", tag: "the top plan", items: ["Everything in Premium", "Exam predictor with model answers", "Write and grade: your answer marked", "Mix-ups, memory boost, practice lab", "Share study sets by link", "A smarter AI model", "100 study sets, files up to 1 GB"] },
 ];
@@ -300,7 +300,7 @@ function plansSheet(highlight = "premium", lead = "") {
 }
 function plusSheet(info = {}) {
   sheet(`<div class="gift"><div class="gift-ico">✨</div><h3>${esc(info.error || "This is a Premium Plus tool")}</h3>
-    <p class="muted">${S.me?.premium ? "You have Premium. This tool is part of Premium Plus, the top plan." : "Free accounts can try it during the first minute. After that it is part of Premium Plus."}</p>
+    <p class="muted">${S.me?.premium ? "You have Premium. This tool is part of Premium Plus, the top plan." : "Free accounts can try it for 20 minutes a day. After that it is part of Premium Plus."}</p>
     ${plansHtml("plus")}<div class="sheet-actions"><button class="btn" data-close>Close</button>${askButtons("plus")}</div></div>`, () => wireAsk("plus"));
 }
 

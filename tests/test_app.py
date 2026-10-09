@@ -376,6 +376,8 @@ class Access(Base):
         return server.db.user_for(self.key)["id"]
 
     def set_user(self, **vals):
+        if "trial_used" in vals or "trial_calls" in vals:                               # the free time is per day: mark which day it belongs to
+            vals.setdefault("trial_day", server.dt.datetime.now(server.dt.timezone.utc).date().isoformat())
         server.db.run(server.update(server.db.users).where(server.db.users.c.id == self.uid()).values(**vals))
 
     def admin(self, method, path, **kw):
@@ -388,16 +390,16 @@ class Access(Base):
 
     def test_free_minute_counts_down_then_locks_everything_but_the_explanation(self):
         d = self.c.get("/api/me", headers=self.h).get_json()
-        self.assertEqual((d["premium"], d["locked"], d["trial_total"]), (False, False, 60))
-        self.assertGreater(d["trial_left"], 55)
+        self.assertEqual((d["premium"], d["locked"], d["trial_total"]), (False, False, server.TRIAL_SECONDS))
+        self.assertGreater(d["trial_left"], server.TRIAL_SECONDS - 5)
         for _ in range(3):                                                          # free browsing never runs the clock
             self.assertEqual(self.c.get("/api/sets", headers=self.h).status_code, 200)
-        self.assertGreater(self.c.get("/api/me", headers=self.h).get_json()["trial_left"], 55)
+        self.assertGreater(self.c.get("/api/me", headers=self.h).get_json()["trial_left"], server.TRIAL_SECONDS - 5)
         self.c.post("/api/beat", headers=self.h, json={"tool": False})
-        self.assertGreater(self.c.get("/api/me", headers=self.h).get_json()["trial_left"], 55)
+        self.assertGreater(self.c.get("/api/me", headers=self.h).get_json()["trial_left"], server.TRIAL_SECONDS - 5)
         self.c.post("/api/beat", headers=self.h, json={"tool": True})               # but being inside a premium tool does
-        self.assertLessEqual(self.c.get("/api/me", headers=self.h).get_json()["trial_left"], 59)
-        self.set_user(trial_used=59.9, trial_at=server.time.time() - 3)
+        self.assertLessEqual(self.c.get("/api/me", headers=self.h).get_json()["trial_left"], server.TRIAL_SECONDS - 1)
+        self.set_user(trial_used=server.TRIAL_SECONDS - 0.1, trial_at=server.time.time() - 3)
         r = self.c.post("/api/sets", headers=self.h, data={"text": TEXT})
         self.assertEqual(r.status_code, 402)
         self.assertEqual((r.get_json()["locked"], r.get_json()["contact"]), (True, "Awsaa.libdeh@gmail.com"))
@@ -405,6 +407,13 @@ class Access(Base):
         self.assertEqual((me["locked"], me["trial_left"]), (True, 0))
         self.assertTrue(self.c.post("/api/beat", headers=self.h).get_json()["locked"])
         self.assertEqual(self.c.post("/api/sets", headers=self.h, data={"text": TEXT}).status_code, 402)
+
+    def test_free_time_comes_back_the_next_day(self):
+        self.set_user(trial_used=server.TRIAL_SECONDS, trial_calls=server.TRIAL_CALLS + 1)
+        self.assertTrue(self.c.get("/api/me", headers=self.h).get_json()["locked"])
+        self.set_user(trial_day="2000-01-01")                                             # yesterday, as far as the server is concerned
+        d = self.c.get("/api/me", headers=self.h).get_json()
+        self.assertEqual((d["locked"], d["trial_left"]), (False, server.TRIAL_SECONDS))
 
     def test_only_a_few_ai_jobs_fit_in_the_free_minute(self):
         self.set_user(trial_calls=server.TRIAL_CALLS)
@@ -414,7 +423,7 @@ class Access(Base):
         self.assertEqual(self.c.post("/api/sets", headers=self.h, data={"text": TEXT}).status_code, 402)
 
     def test_a_premium_link_unlocks_and_revoking_it_locks_again(self):
-        self.set_user(trial_used=500)
+        self.set_user(trial_used=server.TRIAL_SECONDS)
         self.assertEqual(self.c.post("/api/sets", headers=self.h, data={"text": TEXT}).status_code, 402)
         code, iid = self.make_link()
         r = self.c.post("/api/join", headers=self.h, json={"code": code})
@@ -444,7 +453,7 @@ class Access(Base):
         code, _ = self.make_link(days=30)
         self.c.post("/api/join", headers=self.h, json={"code": code})
         self.assertAlmostEqual(self.c.get("/api/me", headers=self.h).get_json()["premium_until"], server.time.time() + 30 * 86400, delta=60)
-        self.set_user(premium_until=server.time.time() - 10, trial_used=500)
+        self.set_user(premium_until=server.time.time() - 10, trial_used=server.TRIAL_SECONDS)
         self.assertEqual(self.c.post("/api/sets", headers=self.h, data={"text": TEXT}).status_code, 402)
 
     def test_admin_needs_the_secret_key(self):
@@ -485,6 +494,14 @@ class OwnerSwitches(Base):
 
     def me(self):
         return self.c.get("/api/me", headers=self.h).get_json()
+
+    def test_the_owner_is_never_rate_limited_but_wrong_keys_are(self):
+        with mock.patch.dict(os.environ, {"ADMIN_KEY": "a-long-private-passphrase"}):
+            for _ in range(90):
+                self.assertEqual(self.c.get("/api/admin/overview", headers={"X-Admin-Key": "a-long-private-passphrase"}).status_code, 200)
+            codes = {self.c.get("/api/admin/overview", headers={"X-Admin-Key": "guess"}).status_code for _ in range(40)}
+            self.assertEqual(codes, {403, 429})                                          # guessing gets shut out
+            self.assertEqual(self.c.get("/api/admin/overview", headers={"X-Admin-Key": "a-long-private-passphrase"}).status_code, 200)
 
     def test_ban_blocks_everything_but_explains_itself(self):
         uid = self.uid()
@@ -638,7 +655,7 @@ class Tiers(Base):
 
     def test_plans_and_limits(self):
         d = self.plan()
-        self.assertEqual((d["plan"], d["limits"]["sets"], d["limits"]["file_mb"]), ("free", 3, 25))
+        self.assertEqual((d["plan"], d["limits"]["sets"], d["limits"]["file_mb"]), ("free", 2, 10))
         self.join()
         d = self.plan()
         self.assertEqual((d["plan"], d["limits"]["sets"], d["limits"]["file_mb"]), ("premium", 30, 200))
@@ -651,7 +668,7 @@ class Tiers(Base):
         tid = self.topics(sid)[0]["id"]
         with mock.patch.object(ai, "make_mixups", return_value=[{"a": "mitosis", "b": "meiosis", "difference": "d", "tip": "t"}]):
             self.assertEqual(self.c.get(f"/api/sets/{sid}/mixups", headers=self.h).status_code, 200)        # inside the free minute
-            self.set_user(trial_used=60)
+            self.set_user(trial_used=server.TRIAL_SECONDS)
             r = self.c.get(f"/api/sets/{sid}/mixups?fresh=1", headers=self.h)
             self.assertEqual((r.status_code, r.get_json()["plus"]), (402, True))                            # minute is over
             self.join()                                                                                      # premium, not plus
@@ -661,14 +678,17 @@ class Tiers(Base):
             self.assertEqual(self.c.get(f"/api/sets/{sid}/mixups", headers=self.h).status_code, 200)
         self.assertEqual(tid > 0, True)
 
-    def test_free_keeps_reading_and_the_non_ai_tools_after_the_minute(self):
+    def test_free_keeps_reading_and_the_basics_after_the_minute(self):
         sid = self.make_set()
         tid = self.topics(sid)[0]["id"]
-        self.set_user(trial_used=60, last_seen=server.time.time() - 3)
-        for path in ("/api/sets", f"/api/sets/{sid}", f"/api/sets/{sid}/mindmap", "/api/stats"):
+        self.set_user(trial_used=server.TRIAL_SECONDS, trial_at=server.time.time() - 3)
+        for path in ("/api/sets", f"/api/sets/{sid}", "/api/stats", f"/api/sets/{sid}/cards"):
             self.assertEqual(self.c.get(path, headers=self.h).status_code, 200, path)
-        self.assertEqual(self.c.put(f"/api/topics/{tid}/mynotes", headers=self.h, json={"text": "my own words"}).status_code, 200)
-        self.assertEqual(self.c.get(f"/api/topics/{tid}/mynotes", headers=self.h).get_json()["text"], "my own words")
+        for path in (f"/api/sets/{sid}/mindmap", "/api/stats?full=1", f"/api/topics/{tid}/mynotes"):       # Premium now
+            self.assertEqual(self.c.get(path, headers=self.h).status_code, 402, path)
+        self.join()
+        for path in (f"/api/sets/{sid}/mindmap", "/api/stats?full=1", f"/api/topics/{tid}/mynotes"):
+            self.assertEqual(self.c.get(path, headers=self.h).status_code, 200, path)
 
     def test_glossary_is_cached_for_premium(self):
         sid = self.make_set()
@@ -718,7 +738,7 @@ class Tiers(Base):
         self.assertEqual(self.c.get(f"/api/shared/{token}").status_code, 404)
 
     def test_free_set_cap_and_file_cap(self):
-        for _ in range(3):
+        for _ in range(2):
             self.make_set()
         with mock.patch.object(ai, "make_plan", return_value=PLAN):
             r = self.c.post("/api/sets", headers=self.h, data={"text": "Cells are the basic unit of life. " * 20})

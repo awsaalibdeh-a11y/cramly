@@ -39,9 +39,9 @@ def register(core):
 
     def admin_only(fn):
         def wrapped(*a, **k):
-            if core.limited("admin", 60):
-                return jsonify(error="Too many tries. Wait a while."), 429
-            if not admin_key_ok():
+            if not admin_key_ok():                                       # only wrong keys count toward the limit, never your own clicks
+                if core.limited("admin_fail", 30):
+                    return jsonify(error="Too many wrong keys. Wait a while."), 429
                 return jsonify(error="Wrong admin key."), 403
             return fn(*a, **k)
         wrapped.__name__ = fn.__name__
