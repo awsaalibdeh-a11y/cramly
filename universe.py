@@ -2,7 +2,7 @@
 any app (or all of them) from one place. Cramly is the authority; the other apps just ask it.
 
   GET  /api/uni/guard?app=alibi&dev=<device id>&since=<last note id>   what should this visitor see? (public, bearer key optional)
-  POST /api/uni/link {code}      claim a pairing code from Cramly (Me > Link a device) so this app knows the same account
+  POST /api/uni/link {code}      claim a pairing code from Cramly (Settings > Use Cramly on another device) so this app knows the same account
   POST /api/uni/ack              the person has read their inbox
   /api/admin/uni*                owner only (through Cramly Control): apps on/off, notes and trolls, device bans
 
@@ -115,7 +115,7 @@ def register(core, admin_only, note, who):
         code = re.sub(r"\D", "", str((request.get_json(silent=True) or {}).get("code", "")))
         row = db.one(select(db.pair_codes).where(db.pair_codes.c.code == code))
         if not row or row["expires"] < time.time():
-            return jsonify(error="That code is wrong or expired. In Cramly open Me, Link a device, and make a new one."), 400
+            return jsonify(error="That code is wrong or expired. In Cramly open Settings, Use Cramly on another device, and make a new one."), 400
         db.run(core.delete(db.pair_codes).where(db.pair_codes.c.code == code))
         u = db.one(select(db.users).where(db.users.c.id == row["user_id"]))
         return jsonify(key=db.new_device(row["user_id"]), name=(u["name"] or "") if u else "")
