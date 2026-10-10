@@ -18,6 +18,7 @@ Cramly builds a study plan, then teaches it.
 - **Tutor panel**: streams answers from *your* material (a small TF-IDF retrieval picks the relevant chunks), voice
   calls (browser speech recognition + voices), dictation, English or Arabic.
 - **Record a lecture**: live transcription in the browser, then it becomes a study set or adds topics to one.
+- **Works offline** (`static/offline.js`): sets, topics, notes and cards you have opened are kept for offline study; flashcard reviews and topic progress made offline are queued and synced on reconnect; AI features say they need a connection.
 - No passwords: the first visit makes an account and keeps a private key in the browser; other devices join with a
   6-digit code. Installable as an app (PWA).
 

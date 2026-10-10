@@ -9,6 +9,10 @@
   <link rel="icon" href="{{ url_for('static', filename='icon-64.png') }}" type="image/png">
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='icon-192.png') }}">
   <link rel="manifest" href="/manifest.webmanifest">
+  <meta property="og:title" content="Cramly · study smarter from your own notes">
+  <meta property="og:description" content="Drop in a PDF, slides or a photo of your notebook. Get a study plan, a tutor, flashcards and quizzes.">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -16,6 +20,7 @@
   <script>try { var t = JSON.parse(localStorage.getItem("cramly.theme") || "null"); document.documentElement.dataset.theme = t === "dark" || t === "auto" ? (t === "auto" ? "" : t) : "light"; if (t === "auto") delete document.documentElement.dataset.theme; } catch (e) { /* default */ }</script>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ v }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='premium.css') }}?v={{ v }}">
+  <script defer src="{{ url_for('static', filename='offline.js') }}?v={{ v }}"></script>
   <script defer src="{{ url_for('static', filename='app.js') }}?v={{ v }}"></script>
   <script defer src="{{ url_for('static', filename='extras.js') }}?v={{ v }}"></script>
   <script defer src="{{ url_for('static', filename='premium.js') }}?v={{ v }}"></script>
