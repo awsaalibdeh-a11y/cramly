@@ -637,6 +637,11 @@ class Universe(Base):
         self.c.post("/api/uni/ack", headers=self.h)
         self.assertEqual(self.guard("alibi")["inbox"], [])
 
+    def test_other_apps_can_ask_whether_a_key_is_the_owners(self):
+        self.assertEqual(self.c.get("/api/uni/verify").status_code, 403)
+        self.assertEqual(self.c.get("/api/uni/verify", headers={"X-Admin-Key": "wrong-wrong-wrong"}).status_code, 403)
+        self.assertEqual(self.admin("get", "/api/uni/verify").status_code, 200)
+
     def test_owner_routes_need_the_key(self):
         self.assertEqual(self.c.get("/api/admin/uni").status_code, 403)
 

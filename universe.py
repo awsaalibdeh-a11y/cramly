@@ -129,6 +129,12 @@ def register(core, admin_only, note, who):
         return jsonify(ok=True)
 
     # ---------------------------------------------------------------- the owner's side
+    @app.get("/api/uni/verify")
+    @admin_only
+    def uni_verify():
+        """Other apps (Homebase) ask: is this the owner's key? Wrong keys count toward the same lockout as everywhere else."""
+        return jsonify(ok=True)
+
     @app.get("/api/admin/uni")
     @admin_only
     def uni_state():
