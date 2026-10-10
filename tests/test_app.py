@@ -563,6 +563,84 @@ class OwnerSwitches(Base):
         self.assertEqual(self.c.get("/api/me", headers=self.h).status_code, 401)
 
 
+class Universe(Base):
+    """One account in every app: the other apps ask /api/uni/guard what each visitor should see."""
+    uid, admin = Access.uid, Access.admin
+
+    def guard(self, app_id="alibi", key=True, dev="d1", since=0):
+        h = {"Authorization": f"Bearer {self.key}"} if key else {}
+        return self.c.get(f"/api/uni/guard?app={app_id}&dev={dev}&since={since}", headers=h).get_json()
+
+    def test_an_unlinked_visitor_gets_a_clean_answer_and_cors(self):
+        r = self.c.get("/api/uni/guard?app=alibi&dev=x")
+        self.assertEqual(r.headers["Access-Control-Allow-Origin"], "*")
+        j = r.get_json()
+        self.assertEqual((j["off"], j["banned"], j["linked"], j["notes"]), (False, False, False, []))
+        self.assertEqual(self.c.open("/api/uni/guard", method="OPTIONS").status_code, 204)
+
+    def test_linking_with_a_pairing_code_gives_the_same_account(self):
+        code = self.c.post("/api/pair", headers=self.h).get_json()["code"]
+        got = self.c.post("/api/uni/link", json={"code": code}).get_json()
+        self.assertTrue(got["key"])
+        self.assertEqual(got["name"], "Aws")
+        self.assertEqual(self.c.post("/api/uni/link", json={"code": code}).status_code, 400)       # a code works once
+        j = self.c.get("/api/uni/guard?app=scout", headers={"Authorization": f"Bearer {got['key']}"}).get_json()
+        self.assertEqual((j["linked"], j["name"]), (True, "Aws"))
+
+    def test_a_ban_made_in_cramly_follows_the_account_into_every_app(self):
+        uid = self.uid()
+        self.admin("post", f"/api/admin/users/{uid}/ban", json={"banned": True, "reason": "Trolling"})
+        for app_id in ("alibi", "scout", "platter"):
+            j = self.guard(app_id)
+            self.assertEqual((j["banned"], j["reason"]), (True, "Trolling"), app_id)
+        self.admin("post", f"/api/admin/users/{uid}/ban", json={"banned": False})
+        self.assertFalse(self.guard()["banned"])
+
+    def test_a_timeout_follows_the_account_too(self):
+        self.admin("post", f"/api/admin/users/{self.uid()}/timeout", json={"minutes": 20, "reason": "Break"})
+        self.assertGreater(self.guard("homebase")["timeout_until"], time.time())
+
+    def test_switching_one_app_off_leaves_the_others_alone(self):
+        self.admin("post", "/api/admin/uni/app", json={"app": "alibi", "off": True, "msg": "Fixing a bug"})
+        self.assertEqual((self.guard("alibi")["off"], self.guard("alibi")["message"]), (True, "Fixing a bug"))
+        self.assertFalse(self.guard("scout")["off"])
+        self.admin("post", "/api/admin/uni/app", json={"app": "alibi", "off": False})
+        self.assertFalse(self.guard("alibi")["off"])
+
+    def test_switching_everything_off(self):
+        self.admin("post", "/api/admin/uni/app", json={"app": "*", "off": True, "msg": "Back soon"})
+        self.assertTrue(all(self.guard(a)["off"] for a in ("alibi", "scout", "cramly")))
+        self.assertEqual(self.c.get("/api/sets", headers=self.h).status_code, 503)               # Cramly itself obeys it
+        self.admin("post", "/api/admin/uni/app", json={"app": "*", "off": False})
+        self.assertEqual(self.c.get("/api/sets", headers=self.h).status_code, 200)
+
+    def test_messages_and_trolls_reach_only_the_chosen_app_and_only_once(self):
+        self.admin("post", "/api/admin/uni/note", json={"app": "alibi", "kind": "message", "body": "Hello players"})
+        self.admin("post", "/api/admin/uni/note", json={"app": "*", "kind": "troll", "effect": "flip"})
+        first = self.guard("alibi")
+        self.assertEqual([n["kind"] for n in first["notes"]], ["message", "troll"])
+        self.assertEqual([n["kind"] for n in self.guard("scout")["notes"]], ["troll"])
+        self.assertEqual(self.guard("alibi", since=first["last"])["notes"], [])                  # already seen
+        self.assertEqual(self.admin("post", "/api/admin/uni/note", json={"app": "x", "kind": "message", "body": "a"}).status_code, 404)
+
+    def test_a_visitor_without_an_account_can_be_blocked_by_device(self):
+        self.admin("post", "/api/admin/uni/device", json={"dev": "abc123", "reason": "Spam"})
+        j = self.guard(key=False, dev="abc123")
+        self.assertEqual((j["banned"], j["reason"]), (True, "Spam"))
+        self.assertFalse(self.guard(key=False, dev="someone-else")["banned"])
+        self.admin("post", "/api/admin/uni/device", json={"dev": "abc123", "clear": True})
+        self.assertFalse(self.guard(key=False, dev="abc123")["banned"])
+
+    def test_the_inbox_shows_in_other_apps_until_it_is_read(self):
+        self.admin("post", f"/api/admin/users/{self.uid()}/message", json={"body": "Hi from the owner"})
+        self.assertEqual([m["body"] for m in self.guard("alibi")["inbox"]], ["Hi from the owner"])
+        self.c.post("/api/uni/ack", headers=self.h)
+        self.assertEqual(self.guard("alibi")["inbox"], [])
+
+    def test_owner_routes_need_the_key(self):
+        self.assertEqual(self.c.get("/api/admin/uni").status_code, 403)
+
+
 class BigUploads(Base):
     """Files up to 1 GB are streamed to disk and read from there."""
 

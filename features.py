@@ -266,3 +266,5 @@ def register(core):
     labs.register(core)
     import asks                                                          # "can I have premium?" messages from inside the app
     asks.register(core, admin_only, note, who)
+    import universe                                                      # one account and one set of owner switches for every app
+    universe.register(core, admin_only, note, who)
