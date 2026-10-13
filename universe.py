@@ -15,7 +15,7 @@ import time
 from flask import jsonify, request
 
 APPS = {"cramly": "Cramly", "homebase": "Homebase", "alibi": "Alibi", "scout": "Scout", "unwritten": "Unwritten", "cookify": "Cookify",
-        "crosswind": "Crosswind", "platter": "Platter", "tripmate": "Tripmate", "showcase": "Showcase"}
+        "crosswind": "Crosswind", "platter": "Platter", "tripmate": "Tripmate", "showcase": "Showcase", "womanten": "Womanten"}
 EFFECTS = ["confetti", "flip", "shake", "rainbow", "disco", "spin", "emoji", "fakecrash", "blur", "typewriter"]
 EXEMPT = ("/api/admin", "/api/uni", "/api/status", "/api/me", "/api/beat")
 
