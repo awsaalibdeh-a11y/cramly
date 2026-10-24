@@ -268,3 +268,5 @@ def register(core):
     asks.register(core, admin_only, note, who)
     import universe                                                      # one account and one set of owner switches for every app
     universe.register(core, admin_only, note, who)
+    import accounts                                                      # email + password accounts for every app
+    accounts.register(core, admin_only, note, who)
