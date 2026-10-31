@@ -39,7 +39,7 @@ INTERVAL_DAYS = [0, 1, 3, 7, 14, 30]                                   # Leitner
 
 TRIAL_SECONDS = int(os.environ.get("TRIAL_SECONDS", "1200"))            # free accounts get this many seconds (20 minutes) of premium tools per day
 TRIAL_CALLS = int(os.environ.get("TRIAL_CALLS", "40"))                 # and at most this many AI jobs a day
-CONTACT = os.environ.get("CONTACT_EMAIL", "Awsaa.libdeh@gmail.com")
+CONTACT = os.environ.get("CONTACT_EMAIL", "Awsaa-Legion@proton.me")
 FREE_ACCOUNTS_PER_DAY = int(os.environ.get("FREE_ACCOUNTS_PER_DAY", "4"))     # new free accounts per visitor address per day
 
 _hits, _hits_lock = {}, threading.Lock()

@@ -20,7 +20,7 @@ Object.assign(ICON, {
   refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/>',
 });
 
-const CONTACT_FALLBACK = "Awsaa.libdeh@gmail.com";
+const CONTACT_FALLBACK = "Awsaa-Legion@proton.me";
 const contact = () => S.me?.contact || CONTACT_FALLBACK;
 const clock = (s) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.floor(Math.max(0, s) % 60)).padStart(2, "0")}`;
 const FEATURES = [
@@ -322,7 +322,7 @@ const KIND_INFO = {
 };
 function askSheet(plan = "premium", kind = "premium") {
   let pick = plan === "plus" ? "plus" : "premium", k = KIND_INFO[kind] ? kind : "premium";
-  sheet(`<h3>💌 Contact Awsaa</h3><p class="muted">Your message goes straight to Awsaa's panel and the answer comes back right here in the app. Prefer email? <a href="${esc(mailLink())}">Send an email instead</a>.</p>
+  sheet(`<h3>💌 Contact Awsaa</h3><p class="muted">Your message goes straight to Legion's panel and the answer comes back right here in the app. Prefer email? <a href="${esc(mailLink())}">Send an email instead</a>.</p>
     <div class="seg kinds" id="ask-kind">${Object.entries(KIND_INFO).map(([id, [e, n]]) => `<button type="button" data-k="${id}">${e} ${n}</button>`).join("")}</div>
     <div class="seg" id="ask-plan"><button type="button" data-p="premium">⭐ Premium</button><button type="button" data-p="plus">✨ Premium Plus</button></div>
     ${S.me?.name ? "" : '<label>Your name<input id="ask-name" maxlength="40" autocomplete="given-name"></label>'}

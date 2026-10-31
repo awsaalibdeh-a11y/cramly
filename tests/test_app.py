@@ -402,7 +402,7 @@ class Access(Base):
         self.set_user(trial_used=server.TRIAL_SECONDS - 0.1, trial_at=server.time.time() - 3)
         r = self.c.post("/api/sets", headers=self.h, data={"text": TEXT})
         self.assertEqual(r.status_code, 402)
-        self.assertEqual((r.get_json()["locked"], r.get_json()["contact"]), (True, "Awsaa.libdeh@gmail.com"))
+        self.assertEqual((r.get_json()["locked"], r.get_json()["contact"]), (True, "Awsaa-Legion@proton.me"))
         me = self.c.get("/api/me", headers=self.h).get_json()                      # the page can still ask what's wrong
         self.assertEqual((me["locked"], me["trial_left"]), (True, 0))
         self.assertTrue(self.c.post("/api/beat", headers=self.h).get_json()["locked"])
@@ -444,7 +444,7 @@ class Access(Base):
             self.assertTrue(self.c.get("/api/me", headers={"Authorization": f"Bearer {k}"}).get_json()["premium"])
         third = self.c.post("/api/join", json={"code": code})
         self.assertEqual(third.status_code, 400)
-        self.assertIn("Awsaa.libdeh@gmail.com", third.get_json()["error"])
+        self.assertIn("Awsaa-Legion@proton.me", third.get_json()["error"])
         self.assertEqual(self.c.post("/api/join", json={"code": "nope"}).status_code, 400)
         again = self.c.post("/api/join", headers={"Authorization": f"Bearer {keys[0]}"}, json={"code": code})
         self.assertEqual(again.status_code, 200)                                    # the same device re-opening it costs nothing
